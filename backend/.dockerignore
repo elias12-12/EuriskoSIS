@@ -1,0 +1,9 @@
+# The host venv is Windows-native and would clobber the Linux venv built inside
+# the image. Never let it into the build context.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env

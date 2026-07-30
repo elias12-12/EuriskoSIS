@@ -1,0 +1,49 @@
+name: eurisko-sis
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    # Defaults are inline so `docker compose up` works from a clean clone with no
+    # .env file (the Phase 0 exit check). These are throwaway local-dev values;
+    # anything genuinely secret (model API keys) goes in .env, which is untracked.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-eurisko}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eurisko_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-eurisko}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The backend must not start migrating until Postgres finishes first-boot
+      # init, otherwise `alembic upgrade head` races it and the stack comes up
+      # half-migrated.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eurisko} -d ${POSTGRES_DB:-eurisko}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eurisko}:${POSTGRES_PASSWORD:-eurisko_dev}@db:5432/${POSTGRES_DB:-eurisko}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Source is bind-mounted so --reload picks up edits without a rebuild.
+      - ./backend:/app
+      # ...but the host .venv is Windows-native, so an anonymous volume keeps the
+      # container's Linux venv from being shadowed by the bind mount above.
+      - /app/.venv
+    # Migrations run on start, so the database schema is never a manual step
+    # someone forgets after a fresh clone.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  pgdata:

@@ -9,7 +9,7 @@ as you move through this plan.
 
 ## Phase 0 — Repo & environment (target: half a day)
 
-- [ ] Create the shared repo. Root layout from day one:
+- [x] Create the shared repo. Root layout from day one:
   ```
   /backend        (FastAPI + PydanticAI, managed with uv)
   /frontend       (React)
@@ -19,13 +19,15 @@ as you move through this plan.
   README.md
   DESIGN.md
   ```
-- [ ] `docker-compose.yml` with two services minimum: `db` (postgres + pgvector image,
+- [x] `docker-compose.yml` with two services minimum: `db` (postgres + pgvector image,
   e.g. `pgvector/pgvector:pg16`) and `backend`. Add `frontend` once it exists.
-- [ ] Get `docker compose up` running an empty FastAPI app that can `SELECT 1` against
+- [x] Get `docker compose up` running an empty FastAPI app that can `SELECT 1` against
   Postgres, before writing any real feature. This is the single most common place
   teams lose a day later — do it now while it's cheap.
-- [ ] `uv init` in `backend/`, add `fastapi`, `pydantic-ai`, `sqlalchemy`, `psycopg[binary]`,
+- [x] `uv init` in `backend/`, add `fastapi`, `pydantic-ai`, `sqlalchemy`, `psycopg[binary]`,
   `alembic` (or a plain SQL migration approach — your call), `pandas`, `openpyxl`.
+  Chose Alembic. Also added `uvicorn[standard]` (server), `pgvector` (VECTOR type for
+  SQLAlchemy/Alembic) and `pydantic-settings` (env-based config).
 
 **Exit check:** `docker compose up` from a clean clone gives you a running API that can
 talk to the database. Nothing else needs to work yet.

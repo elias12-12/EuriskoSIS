@@ -6,7 +6,10 @@ spec, and how I want us to work. Don't re-litigate the decisions marked
 LOCKED — if one seems wrong, say so and ask, don't just change it.
 
 See `PROJECT_PLAN.md` in this same repo for the phase-by-phase build order.
-**Current phase: 0 — repo & environment.** Update this line as we move through phases.
+**Current phase: 0 — repo & environment — COMPLETE** (exit check verified 30 Jul 2026:
+`docker compose up` from an empty volume serves the API and `SELECT 1` reaches
+Postgres with pgvector 0.8.5 installed). **Next: Phase 1 — data modeling and loading.**
+Update this line as we move through phases.
 
 ---
 
@@ -53,10 +56,20 @@ Every team gets identical data. The differentiator is architecture, not the data
   scoping rules, and no justification yet for a second store. If a specific
   query pattern later proves this wrong, we revisit — we don't add a second
   DB "because we've seen three."
-- **Migrations**: [DECIDE: Alembic vs. plain SQL scripts — pick one in Phase 0
-  and note the choice here.]
+- **Migrations: Alembic** (decided Phase 0). SQLAlchemy is already required, so the
+  ORM models are the single source of truth and `--autogenerate` stops DDL drifting
+  from them by hand; the Phase 1 schema will churn and versioned revisions make
+  that cheap. `alembic upgrade head` runs on backend container start, so a fresh
+  clone never has a forgotten manual schema step. Accepted cost: pgvector's
+  `VECTOR` type needs `pgvector.sqlalchemy` imported in `alembic/env.py` (to make
+  autogenerate compare embedding columns instead of recreating them) and in
+  `script.py.mako` (so generated revisions can name it). `CREATE EXTENSION vector`
+  is revision `0001` rather than image setup, so any database we migrate is correct.
 - **Embeddings**: [DECIDE: OpenAI `text-embedding-3-small` vs. a local
   sentence-transformers model — note the choice and why once made.]
+  Deliberately still open at the end of Phase 0: it isn't needed until Phase 3,
+  and the choice is better made against the actual chunking strategy than in the
+  abstract. Ask before Phase 3 starts.
 - **Auth**: student ID is sufficient identity for the student portal; admin has
   a separate, simpler login. No password infrastructure required by the brief,
   but the authenticated identity must be carried through every layer (HTTP →
