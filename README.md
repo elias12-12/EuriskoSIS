@@ -4,15 +4,18 @@ University assistant web app with a student portal and an admin panel. See
 [CLAUDE.md](CLAUDE.md) for architecture decisions and the data model, and
 [PROJECT_PLAN.md](PROJECT_PLAN.md) for the phase-by-phase build order.
 
-**Current phase: 1 — data modelling and loading — complete.**
+**Current phase: 2 — plain API endpoints, no agent — complete.**
 
 ## Layout
 
 ```
 backend/     FastAPI + PydanticAI, managed with uv
-  app/       config, db, models (schema), academics (GPA / degree progress), main
+  app/       config, db, models (schema), main, schemas (responses)
+             academics (GPA / degree progress), records (profile / schedule /
+             history), eligibility (registration rules)
+    routers/ students.py
   alembic/   migrations
-  scripts/   load_spreadsheet.py, verify_phase1.py
+  scripts/   load_spreadsheet.py, verify_phase1.py, verify_phase2.py
 frontend/    React (arrives in Phase 6)
 ingestion/   PDF parsing / chunking / embedding (arrives in Phase 3)
 data/        the three source files — the only things the assistant may know from
@@ -61,6 +64,35 @@ straight from the spreadsheet in pandas and diffs it against the SQL, then prove
 credit capping and the repeat rule against a fabricated student inside a
 rolled-back transaction. Exits non-zero on any disagreement. Run it after
 touching anything in `app/academics.py`.
+
+## Endpoints
+
+Browse them in Swagger at <http://localhost:8000/docs>.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /students/{id}/profile` | identity, programme, advisor, standing, GPA |
+| `GET /students/{id}/schedule` | current-term timetable (days, times, rooms, staff) |
+| `GET /students/{id}/courses` | full history, newest term first, in-progress included |
+| `GET /students/{id}/degree-progress` | per-category earned vs required, capped |
+| `GET /students/{id}/eligibility/{course_code}` | may they register, and why not |
+
+Course codes contain a space — URL-encode them: `.../eligibility/MECH%20310`.
+
+> **These are not the student-facing surface.** The ID is a path parameter, which
+> suits the admin browsers but not a student reading their own record. Phase 4 adds
+> `/me/*` taking the ID from the authenticated session. Until then, no
+> student-facing client may call `/students/{id}/*`.
+
+Check them all against all five students:
+
+```bash
+docker compose exec backend python scripts/verify_phase2.py
+```
+
+Five endpoints x five students, a seven-course eligibility matrix, and the 404
+paths. It asserts the GPA and credit figures hand-verified in Phase 1, so it
+doubles as a regression guard.
 
 ## Working on the backend outside Docker
 

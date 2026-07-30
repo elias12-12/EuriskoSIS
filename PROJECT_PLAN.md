@@ -70,17 +70,23 @@ without an `if program ==` anywhere.
 
 ## Phase 2 — Plain API endpoints, no agent
 
-- [ ] `GET /students/{id}/profile`
-- [ ] `GET /students/{id}/schedule` (current term = FA2026, from `Class_Schedule_FA2026`)
-- [ ] `GET /students/{id}/courses` (full academic history)
-- [ ] `GET /students/{id}/degree-progress`
-- [ ] `GET /students/{id}/eligibility/{course_code}` — build this as a plain
+- [x] `GET /students/{id}/profile`
+- [x] `GET /students/{id}/schedule` (current term = FA2026, from `Class_Schedule_FA2026`)
+- [x] `GET /students/{id}/courses` (full academic history)
+- [x] `GET /students/{id}/degree-progress`
+- [x] `GET /students/{id}/eligibility/{course_code}` — build this as a plain
   endpoint before it's a tool. It needs: course's prerequisites, whether each was
   passed at C- or above, and (if relevant) load/probation constraints from the
   Handbook rules you've encoded.
-- [ ] Test **every endpoint against all 5 students**, not just Maya. Rania
+  Also covers attempt limits, whether the course is offered this term, and
+  already-registered. Returns *why*, not just yes/no.
+- [x] Test **every endpoint against all 5 students**, not just Maya. Rania
   (probation, repeats) and Lynn (zero history) are the ones that break naive
   implementations.
+  `backend/scripts/verify_phase2.py` — 5 endpoints x 5 students plus a 7-course
+  eligibility matrix and the 404 paths. Rania is capped at 9 credits by probation
+  so every additional course is refused; Lynn has no GPA, so she cannot satisfy
+  the 3.00 needed to exceed 15 credits.
 
 **Exit check:** Swagger UI, hit every endpoint for every student ID, answers
 match what you'd compute by hand from the spreadsheet.

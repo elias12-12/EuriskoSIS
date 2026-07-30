@@ -192,11 +192,103 @@ percentage is confidently wrong about how far he is from graduating.
   every access a trivial scan; adding indexes now would be guessing at Phase 2's
   query shapes. Revisit when there is a real query plan to improve.
 
-### Still open after Phase 1
+---
 
-- The prerequisite C− threshold is a *global* Handbook rule (as opposed to the
-  per-category gate above) and has no home yet. Phase 5 builds eligibility; the
-  threshold should land as config or a policy row then, not as a literal.
-- Academic standing is stored as given by the registrar, not derived from GPA.
-  Rania's 1.65 is consistent with her recorded probation, but nothing yet
-  *computes* standing or the two-consecutive-terms dismissal rule.
+## Phase 2 — plain API endpoints, no agent
+
+### These endpoints are not the student-facing surface
+
+The plan specifies `/students/{id}/...`, and the cross-cutting check says the
+authenticated student ID must never come from a client-supplied parameter. Both
+are right: a path parameter is correct for the admin panel's browsers and wrong
+for a student reading their own record.
+
+So Phase 2 builds the by-ID surface, and every function in `records.py`,
+`academics.py` and `eligibility.py` takes `student_id` as an argument and filters
+on it *in SQL*. The scoping guarantee therefore holds wherever the ID came from,
+and Phase 4's `/me/*` surface is a routing change rather than a rewrite. Recorded
+in `CLAUDE.md` as a carry-forward so it cannot be forgotten: until `/me/*` exists,
+no student-facing client may call `/students/{id}/*`.
+
+### Handbook policy lives in config, not in the settings table
+
+The C− prerequisite threshold (the one Phase 1 left homeless), the three-attempt
+limit, the 9–15 full-time band, the 9-credit probation cap and the 3.00 overload
+GPA are all in `config.Settings`, each next to the Handbook sentence it comes
+from.
+
+Deliberately *not* in `assistant_settings`: that table is the admin panel's
+behaviour config (tone, model, length, temperature). Exposing degree rules through
+the same form would make "wrong graduation answers" an admin-editable feature.
+
+Note the two distinct C− rules, which are easy to conflate: the *global*
+prerequisite gate lives in config, while whether a course counts toward Major Core
+is `program_requirement_categories.min_grade_points`, per-category data.
+
+### Eligibility explains itself
+
+`check_eligibility` returns a list of `{rule, satisfied, detail}` rather than a
+boolean. A bare refusal is useless to a student and unciteable by the agent, and
+the same structure is what the Phase 5 tool will hand the model.
+
+Rules are gathered in SQL and judged in Python, because each has to phrase itself
+in prose. Blocking: offered this term, prerequisites at C− or above, attempt limit,
+not already registered, load within cap. Conditional rather than blocking: a load
+above 15 is *permitted* with advisor approval when GPA allows, so it surfaces as
+`requires_advisor_approval` instead of a refusal.
+
+An unknown course returns 404, not "ineligible" — "you are not eligible for a
+course that does not exist" would be a confidently wrong answer.
+
+### A bug the 5-student matrix caught
+
+The first implementation computed prospective load as
+`registered_credits + course.credits` unconditionally. For a course the student is
+*already registered for*, those credits are already inside `registered_credits`,
+so it overstated the total by the course's credits — Karim's MECH 310 read
+"9 → 12" when registering again would change nothing, and Lynn's MATH 101 gained a
+spurious load blocker on top of the real one.
+
+Fixed by adding zero credits when already registered and skipping the load rule
+entirely in that case. `verify_phase2.py` now asserts
+`prospective == registered` whenever `already_registered`, so it cannot regress.
+Worth recording because it is the kind of error that never fails loudly — it just
+quietly produces a plausible wrong number.
+
+### Verification goes through HTTP
+
+Phase 1 already checked the SQL against an independent implementation, so
+`verify_phase2.py` tests what is genuinely new: routing, response schemas,
+serialisation, error paths. It asserts the GPA and credit figures hand-verified in
+Phase 1, making it a regression guard — if a refactor changes how credits are
+counted, those numbers move and the script fails.
+
+It also checks two invariants that would otherwise be easy to break silently:
+`schedule.total_credits` must equal `credits_in_progress` (they derive from the
+same enrollments by different routes), and `credits_applied <= credits_required`
+for every category, which is the capping rule stated as an assertion.
+
+### Two results that look wrong and are not
+
+- **Rania is refused every additional course.** She is registered for exactly 9
+  credits and probation caps her at 9, so any addition breaks the cap. Correct,
+  and the message says so rather than citing prerequisites.
+- **Lynn cannot exceed 15 credits.** She is at 13; a fourth 3-credit course needs
+  advisor approval *and* a GPA of 3.00+, and a first-term student has no GPA at
+  all. Refusing is the literal rule; the message says "you have no GPA yet"
+  instead of implying a low one.
+
+### Still open after Phase 2
+
+- ~~The prerequisite C− threshold has no home.~~ Resolved in Phase 2:
+  `config.prerequisite_min_grade_points`.
+- **Academic standing is stored, not derived.** It comes from the registrar as
+  given. Rania's 1.65 is consistent with her recorded probation, but nothing
+  *computes* standing, and the two-consecutive-review-terms dismissal rule (Summer
+  excluded) is unimplemented. Fine while the two agree; a divergence would be
+  invisible.
+- **Withdrawals are unmodelled beyond the grading scale.** `W` is handled
+  correctly in GPA and credits, but the max-4-W's-per-degree limit and the
+  add/drop/withdraw deadlines are not checked anywhere.
+- **`/me/*` does not exist yet** — see the Phase 2 note above; this is the one
+  carry-forward that is a correctness issue rather than a gap.

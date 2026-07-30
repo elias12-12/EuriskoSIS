@@ -6,12 +6,17 @@ spec, and how I want us to work. Don't re-litigate the decisions marked
 LOCKED — if one seems wrong, say so and ask, don't just change it.
 
 See `PROJECT_PLAN.md` in this same repo for the phase-by-phase build order.
-**Current phase: 1 — data modeling and loading — COMPLETE** (exit check verified
-30 Jul 2026: one generic query computes per-category degree progress for any
-student ID, correct for all 5 students, with no `if program ==` anywhere; GPA and
-per-category progress cross-checked against an independent pandas implementation
-reading the spreadsheet directly). Phase 0 also complete. **Next: Phase 2 — plain
-API endpoints, no agent.** Update this line as we move through phases.
+**Current phase: 2 — plain API endpoints, no agent — COMPLETE** (exit check verified
+30 Jul 2026: all five endpoints hit for all five student IDs via Swagger and via
+`scripts/verify_phase2.py`, answers match hand computation, 404s correct).
+Phases 0 and 1 also complete. **Next: Phase 3 — document ingestion (RAG).**
+Update this line as we move through phases.
+
+Carried into Phase 4, do not lose: the Phase 2 endpoints take `student_id` as a
+**path parameter**, which is right for the admin browsers but is what section 7
+rule 2 forbids for a student reading their own record. Phase 4 must add a `/me/*`
+surface that takes the ID from the authenticated session. Until it exists, no
+student-facing client may call `/students/{id}/*`.
 
 ---
 
