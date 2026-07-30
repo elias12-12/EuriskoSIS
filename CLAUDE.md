@@ -67,11 +67,18 @@ Every team gets identical data. The differentiator is architecture, not the data
   autogenerate compare embedding columns instead of recreating them) and in
   `script.py.mako` (so generated revisions can name it). `CREATE EXTENSION vector`
   is revision `0001` rather than image setup, so any database we migrate is correct.
-- **Embeddings**: [DECIDE: OpenAI `text-embedding-3-small` vs. a local
-  sentence-transformers model — note the choice and why once made.]
-  Deliberately still open at the end of Phase 0: it isn't needed until Phase 3,
-  and the choice is better made against the actual chunking strategy than in the
-  abstract. Ask before Phase 3 starts.
+- **Embeddings: OpenAI `text-embedding-3-small`** (decided before Phase 3), at its
+  default 1536 dimensions — so `document_chunks.embedding` is `VECTOR(1536)`.
+  Rationale: the corpus is two PDFs totalling 11 pages, so the entire ingestion is
+  a handful of API calls and per-query cost is one embedding — there is no volume
+  here that would justify self-hosting. Keeping it hosted also keeps
+  `sentence-transformers` and torch (~2GB of image) out of the backend container,
+  and avoids CPU inference competing with the API for resources.
+  Accepted trade-off: ingestion and retrieval now need `OPENAI_API_KEY` and
+  network access, so retrieval does not work offline. That makes `.env` load-bearing
+  for the first time. If the key becomes a problem, swapping to a local model is a
+  re-embed of ~11 pages plus a migration to change the vector dimension — cheap
+  enough that this is not a one-way door.
 - **Auth**: student ID is sufficient identity for the student portal; admin has
   a separate, simpler login. No password infrastructure required by the brief,
   but the authenticated identity must be carried through every layer (HTTP →

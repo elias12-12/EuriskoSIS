@@ -58,12 +58,29 @@ looks like success and isn't. Compose supplies throwaway dev defaults for the
 Postgres credentials inline so a clean clone runs with no `.env`; real secrets
 (model API keys) only ever come from the untracked `.env`.
 
-### Still open
+### Embeddings: OpenAI `text-embedding-3-small` (decided before Phase 3)
 
-- **Embeddings** — `CLAUDE.md` §3 still marks this `[DECIDE]` (OpenAI
-  `text-embedding-3-small` vs. local sentence-transformers). Not needed until
-  Phase 3; deferred deliberately so the choice can be made against the actual
-  chunking strategy rather than in the abstract.
+The other `[DECIDE]` from `CLAUDE.md` §3, deliberately deferred out of Phase 0 so
+it could be made against the real corpus rather than in the abstract.
+
+Chosen at the default **1536 dimensions**, which fixes
+`document_chunks.embedding` as `VECTOR(1536)`.
+
+The deciding factor is scale: the corpus is two PDFs totalling 11 pages. Whole-
+corpus ingestion is a handful of API calls and a query costs one embedding, so
+there is no volume here that would repay self-hosting. Keeping it hosted also
+keeps `sentence-transformers` and torch — roughly 2GB of image — out of the
+backend container, and avoids CPU inference competing with the API process for
+resources in a single-container dev setup.
+
+Accepted trade-off: ingestion and retrieval now require `OPENAI_API_KEY` and
+network access, so retrieval does not work offline. This makes `.env` load-bearing
+for the first time — until now Compose's inline dev defaults covered everything.
+
+Not a one-way door: switching to a local model later means re-embedding ~11 pages
+plus one migration to change the vector dimension. Worth stating explicitly,
+because the usual argument against a hosted embedding model is lock-in, and at
+this corpus size that argument does not hold.
 
 ---
 
