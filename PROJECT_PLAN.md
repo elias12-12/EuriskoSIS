@@ -36,7 +36,7 @@ talk to the database. Nothing else needs to work yet.
 
 ## Phase 1 — Data modeling and loading (this is the phase that separates projects)
 
-- [ ] Design the schema (full version in `CLAUDE.md` → Data Model). Key decisions to
+- [x] Design the schema (full version in `CLAUDE.md` → Data Model). Key decisions to
   lock in before writing SQL:
   - `category_courses` is a join table, not a column on `courses` — a course can
     satisfy different categories in different programmes.
@@ -47,15 +47,20 @@ talk to the database. Nothing else needs to work yet.
     course means AND, never OR. Don't add an OR case; the data doesn't have one.
   - Store `grading_scale` as a real table (grade → points, earns_credit,
     included_in_gpa) and join against it — never hardcode a Python dict.
-- [ ] Write a one-off loader script: pandas reads each sheet, inserts into the
+- [x] Write a one-off loader script: pandas reads each sheet, inserts into the
   matching table, in dependency order (terms → programs → categories → courses →
   category_courses → prerequisites → students → enrollments → schedule → grading_scale).
-- [ ] **Hand-verify Maya's GPA** (`S2023011`) against `Enrollments` + `Grading_Scale`
+  `backend/scripts/load_spreadsheet.py`; re-runnable (wipes and reinserts), and it
+  derives `selection_rule` rather than hand-transcribing it.
+- [x] **Hand-verify Maya's GPA** (`S2023011`) against `Enrollments` + `Grading_Scale`
   before moving on: sum(grade_points × credits) / sum(credits), excluding any
   W/P rows. If your query doesn't match your by-hand math, stop here.
-- [ ] **Hand-verify degree progress for Jad** (`S2023027`) — he's the trap case
+  231.40 / 64 = **3.62**, matches by hand and in pandas.
+- [x] **Hand-verify degree progress for Jad** (`S2023027`) — he's the trap case
   (lots of credits, but weak on Gen Ed and hasn't started capstone). If your
   query says he's close to graduating by credit count alone, the query is wrong.
+  55 credits = CORE 28 / ELEC 9 / GEN 3 / MAJ 15 / PROF 0; 3 of 5 categories
+  unmet including the whole capstone track. GPA 153.00 / 55 = **2.78**.
 
 **Exit check:** you can write one SQL query that computes degree progress per
 category for any student ID, and it gives the right answer for all 5 students

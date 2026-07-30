@@ -7,6 +7,7 @@ to some localhost guess that happens to work on one machine and not in Docker.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,6 +25,14 @@ class Settings(BaseSettings):
     app_name: str = "Eurisko University Assistant"
     # SQLAlchemy URL, e.g. postgresql+psycopg://user:pass@db:5432/eurisko
     database_url: str
+    # Which term "my schedule" and load/probation limits refer to. Configuration
+    # rather than a literal in queries: it is an operational fact that changes
+    # every few months, and `WHERE term_code = 'FA2026'` scattered through the
+    # data layer is the kind of thing that rots silently.
+    current_term: str = "FA2026"
+    # Where the three source files live. Defaults to the container mount point;
+    # override with DATA_DIR when running on the host.
+    data_dir: Path = Path("/data")
 
 
 @lru_cache

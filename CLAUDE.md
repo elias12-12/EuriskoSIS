@@ -6,10 +6,12 @@ spec, and how I want us to work. Don't re-litigate the decisions marked
 LOCKED — if one seems wrong, say so and ask, don't just change it.
 
 See `PROJECT_PLAN.md` in this same repo for the phase-by-phase build order.
-**Current phase: 0 — repo & environment — COMPLETE** (exit check verified 30 Jul 2026:
-`docker compose up` from an empty volume serves the API and `SELECT 1` reaches
-Postgres with pgvector 0.8.5 installed). **Next: Phase 1 — data modeling and loading.**
-Update this line as we move through phases.
+**Current phase: 1 — data modeling and loading — COMPLETE** (exit check verified
+30 Jul 2026: one generic query computes per-category degree progress for any
+student ID, correct for all 5 students, with no `if program ==` anywhere; GPA and
+per-category progress cross-checked against an independent pandas implementation
+reading the spreadsheet directly). Phase 0 also complete. **Next: Phase 2 — plain
+API endpoints, no agent.** Update this line as we move through phases.
 
 ---
 

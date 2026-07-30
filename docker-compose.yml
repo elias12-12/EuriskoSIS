@@ -39,6 +39,10 @@ services:
       # ...but the host .venv is Windows-native, so an anonymous volume keeps the
       # container's Linux venv from being shadowed by the bind mount above.
       - /app/.venv
+      # The dataset is frozen ("Do not edit. Any change invalidates comparison
+      # across teams"), so it is mounted read-only and the container cannot
+      # corrupt it even by accident.
+      - ./data:/data:ro
     # Migrations run on start, so the database schema is never a manual step
     # someone forgets after a fresh clone.
     command: >
