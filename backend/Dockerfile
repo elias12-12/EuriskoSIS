@@ -14,13 +14,22 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
+# Paths are relative to the repo root, not to backend/: the build context widened
+# in Phase 3 so the image can carry `ingestion/` as well. See docker-compose.yml.
+
 # Dependencies first, as their own layer: this is only rebuilt when pyproject.toml
 # or uv.lock change, not on every source edit.
-COPY pyproject.toml uv.lock ./
+COPY backend/pyproject.toml backend/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project
 
-COPY . .
+COPY backend/ ./
+
+# Landed inside /app so it is importable as `ingestion` under the existing
+# PYTHONPATH=/app, with no second entry to keep in sync. It stays a top-level
+# directory in the repo (the Phase 0 layout); this is only where it lives in the
+# container. Compose mounts the host copy over this path for --reload.
+COPY ingestion/ ./ingestion/
 
 EXPOSE 8000
 

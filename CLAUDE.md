@@ -6,10 +6,18 @@ spec, and how I want us to work. Don't re-litigate the decisions marked
 LOCKED — if one seems wrong, say so and ask, don't just change it.
 
 See `PROJECT_PLAN.md` in this same repo for the phase-by-phase build order.
-**Current phase: 2 — plain API endpoints, no agent — COMPLETE** (exit check verified
-30 Jul 2026: all five endpoints hit for all five student IDs via Swagger and via
-`scripts/verify_phase2.py`, answers match hand computation, 404s correct).
-Phases 0 and 1 also complete. **Next: Phase 3 — document ingestion (RAG).**
+**Current phase: 3 — document ingestion (RAG) — BUILT, EXIT CHECK NOT YET RUN.**
+Phases 0, 1 and 2 are complete (Phase 2 verified 30 Jul 2026: all five endpoints
+for all five student IDs via Swagger and `scripts/verify_phase2.py`).
+
+Phase 3 as of 1 Aug 2026: extraction, both chunkers, the `documents` /
+`document_chunks` schema (revision `0004`), the ingestion pipeline, vector
+retrieval and `GET /documents/search` are all written, and the 58 chunk
+boundaries have been hand-verified with `scripts/inspect_chunks.py` (no key
+needed). **What remains is the exit check itself** — `scripts/verify_phase3.py`,
+the six-question test set — which needs `OPENAI_API_KEY` in `.env` and a running
+database. Do not start Phase 4 until it passes: retrieval that is wrong here is
+wrong behind the agent too, and much harder to see.
 Update this line as we move through phases.
 
 Carried into Phase 4, do not lose: the Phase 2 endpoints take `student_id` as a

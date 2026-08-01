@@ -1,0 +1,27 @@
+# Build context is the repo root (Phase 3): the backend image needs both
+# `backend/` and `ingestion/`, because the admin panel's "re-run ingestion"
+# button calls the pipeline in-process rather than shelling out.
+#
+# Moved here from backend/.dockerignore when the context widened -- Docker reads
+# the .dockerignore at the context root, so a file under backend/ would be
+# silently inert.
+
+# The host venv is Windows-native and would clobber the Linux venv built inside
+# the image. Never let it into the build context.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+
+# Not needed to build or run the API.
+.git/
+.github/
+frontend/
+node_modules/
+
+# The dataset is bind-mounted read-only at /data by docker-compose, so baking a
+# second copy into the image would create two sources for a frozen file.
+data/

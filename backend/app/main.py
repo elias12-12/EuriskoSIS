@@ -14,14 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_session
-from app.routers import students
+from app.routers import documents, students
 
 settings = get_settings()
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.2.0",
-    summary="University assistant API (Phase 2: plain endpoints, no agent)",
+    version="0.3.0",
+    summary="University assistant API (Phase 3: document retrieval, no agent)",
 )
 
 router = APIRouter(tags=["health"])
@@ -31,7 +31,7 @@ router = APIRouter(tags=["health"])
 def root() -> dict[str, str]:
     return {
         "service": settings.app_name,
-        "phase": "2 - plain API endpoints, no agent",
+        "phase": "3 - document ingestion and retrieval, no agent",
         "docs": "/docs",
     }
 
@@ -77,3 +77,4 @@ def health_db(session: Session = Depends(get_session)) -> Any:
 
 app.include_router(router)
 app.include_router(students.router)
+app.include_router(documents.router)

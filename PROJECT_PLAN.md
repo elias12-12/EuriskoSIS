@@ -95,21 +95,37 @@ match what you'd compute by hand from the spreadsheet.
 
 ## Phase 3 — Document ingestion (RAG), tested standalone
 
-- [ ] Parse the two PDFs with different strategies — the Catalogue is short
+- [x] Parse the two PDFs with different strategies — the Catalogue is short
   structured entries and tables; the Handbook is dense prose with numbered
   sections. One generic chunker will hurt one of the two.
-- [ ] Catalogue: chunk per course description (with its prerequisite line kept
+  `ingestion/extract.py` (pypdf, page-tagged line stream — Handbook sections 6
+  and 8 cross a page boundary mid-table, so chunking page by page would split
+  them), `ingestion/catalogue.py`, `ingestion/handbook.py`, routed by filename
+  in `ingestion/parse.py`. Neither chunker has a chunk size.
+- [x] Catalogue: chunk per course description (with its prerequisite line kept
   attached — never split a course from its prereqs), and separately per
   programme/category table (page 1-2 content).
-- [ ] Handbook: chunk per numbered subsection (1.1, 1.2, 2.2, 3, 5, 6, 9, etc.),
+  39 chunks: 33 courses, 2 programmes, 4 overview. The chunker asserts both the
+  33 count and that every course chunk still holds a prerequisite line.
+- [x] Handbook: chunk per numbered subsection (1.1, 1.2, 2.2, 3, 5, 6, 9, etc.),
   keeping tables (grading scale, calendar, fee table, routing table) intact
   as single chunks — splitting the routing table (section 9) mid-row makes it
   useless for "who do I contact" questions.
-- [ ] Embed and store in `pgvector` with metadata: source file, section/course
+  19 chunks: 18 sections + front matter, asserted against the full expected
+  section list. Section 5 deliberately keeps both term calendars together.
+- [x] Embed and store in `pgvector` with metadata: source file, section/course
   reference, page number. You need this metadata for citations later.
-- [ ] Build the ingestion pipeline as re-runnable (delete-and-reinsert per
+  `documents` / `document_chunks` in Alembic revision `0004`, `VECTOR(1536)`.
+  `RetrievedChunk.citation()` renders the source string an answer must quote.
+- [x] Build the ingestion pipeline as re-runnable (delete-and-reinsert per
   document, keyed by filename) so the admin panel's "re-run ingestion" button
   has something real to call.
+  `ingestion/pipeline.py`; skips unchanged files by sha256 (`--force` after a
+  chunker change), and a failed run leaves no chunks but does leave the reason.
+- [x] Hand-verify every chunk boundary by eye — `scripts/inspect_chunks.py`,
+  which needs neither the database nor an API key. This is the one Phase 3
+  decision no later test can catch: a wrong boundary does not raise, it
+  produces a passage that retrieves well and answers badly. 58 chunks read.
 - [ ] **Test retrieval directly, no agent involved**, with a fixed test set:
   - "What are the prerequisites for CENG 320?"
   - "How many credits do I need in General Education?"
@@ -118,9 +134,23 @@ match what you'd compute by hand from the spreadsheet.
   - "How is my GPA calculated?"
   - "Who do I contact about a scholarship?"
   If any of these retrieve the wrong section, fix retrieval before touching the agent.
+  Written as `backend/scripts/verify_phase3.py` — asserts the expected
+  `section_ref` per question, not just that something plausible came back
+  (1.1 is the grading scale, 1.2 is the GPA formula; only one answers "how is my
+  GPA calculated"). **Not yet run: needs `OPENAI_API_KEY`.**
 
 **Exit check:** for each test question above, the top retrieved chunk actually
 contains the answer, and you can point to which document/section it came from.
+**Not met yet** — everything up to the embedding call is built and hand-verified,
+but the check itself needs a key and a running database.
+
+To close this phase:
+
+```
+docker compose up -d --build
+docker compose exec backend python scripts/ingest_documents.py
+docker compose exec backend python scripts/verify_phase3.py
+```
 
 ---
 

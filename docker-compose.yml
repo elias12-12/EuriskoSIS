@@ -25,9 +25,19 @@ services:
       start_period: 10s
 
   backend:
-    build: ./backend
+    # Context is the repo root, not ./backend, so the image can carry `ingestion/`
+    # too -- the admin panel's "re-run ingestion" button calls that pipeline
+    # in-process, so it has to be importable from the API container.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eurisko}:${POSTGRES_PASSWORD:-eurisko_dev}@db:5432/${POSTGRES_DB:-eurisko}
+      # Embeddings are OpenAI text-embedding-3-small (CLAUDE.md section 3), so
+      # ingestion and retrieval need this. No default: it is a real secret and
+      # comes only from the untracked .env. Empty until one is supplied, which
+      # fails at the embedding call with a clear message rather than at startup.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -39,6 +49,10 @@ services:
       # ...but the host .venv is Windows-native, so an anonymous volume keeps the
       # container's Linux venv from being shadowed by the bind mount above.
       - /app/.venv
+      # Same reason, for the ingestion package: it lives at the repo root but is
+      # imported as `ingestion` from /app, so it mounts over the copy the image
+      # already contains. Nested inside the /app mount above, which Docker allows.
+      - ./ingestion:/app/ingestion
       # The dataset is frozen ("Do not edit. Any change invalidates comparison
       # across teams"), so it is mounted read-only and the container cannot
       # corrupt it even by accident.

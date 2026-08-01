@@ -9,7 +9,7 @@ of loose dictionaries.
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -175,3 +175,44 @@ class Eligibility(BaseModel):
         )
     )
     notes: list[str]
+
+
+class SearchHit(BaseModel):
+    content: str
+    document_title: str
+    document_filename: str
+    chunk_kind: str
+    section_ref: str | None = None
+    section_title: str | None = None
+    page: int | None = None
+    similarity: float = Field(
+        description="1 - cosine distance. 1.0 is identical, 0.0 unrelated."
+    )
+    citation: str = Field(
+        description=(
+            "Ready-to-quote source, e.g. 'Student Handbook 2026-2027, section "
+            "2.3 (Adding, dropping and withdrawing), page 2'. Every "
+            "document-based answer must carry one (CLAUDE.md section 7 rule 5)."
+        )
+    )
+
+
+class SearchResults(BaseModel):
+    query: str
+    hits: list[SearchHit]
+
+
+class DocumentStatus(BaseModel):
+    filename: str
+    title: str
+    status: str = Field(description="pending, ingesting, ready or failed.")
+    page_count: int | None = None
+    uploaded_at: datetime
+    chunk_count: int
+    embedded_count: int = Field(
+        description=(
+            "Chunks with an embedding. Lower than chunk_count means a partial "
+            "ingestion -- 'ingested but not searchable' is its own failure."
+        )
+    )
+    error: str | None = None

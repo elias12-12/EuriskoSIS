@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     # override with DATA_DIR when running on the host.
     data_dir: Path = Path("/data")
 
+    # --- Retrieval (Phase 3) -------------------------------------------------
+    # Locked in CLAUDE.md section 3. The vector *dimension* is not here: it is a
+    # schema fact (`models.EMBEDDING_DIMENSIONS`), because changing it requires a
+    # migration and a re-embed, not a restart.
+    embedding_model: str = "text-embedding-3-small"
+    # Unlike `database_url` this may be absent, and absence is not a startup
+    # error: the API serves every Phase 2 endpoint without it. It fails at the
+    # first embedding call instead, where the message can say what is missing.
+    openai_api_key: str | None = None
+    # How many chunks a search returns. Five is enough for a cited answer over a
+    # corpus of roughly seventy chunks without burying the model in near-misses.
+    retrieval_top_k: int = 5
+
     # --- Handbook academic policy -------------------------------------------
     # These are institutional rules quoted from the Student Handbook, not tuning
     # knobs. They live here rather than as literals scattered through queries so

@@ -4,33 +4,43 @@ The source spreadsheet is deliberately flat -- no keys, types or constraints
 declared -- so every constraint here is a modelling decision. The ones that
 matter are commented; see DESIGN.md for the longer reasoning.
 
-Covers the nine data sheets only. The app-owned tables from CLAUDE.md section 5
-(`documents`, `document_chunks`, `assistant_settings`, `conversations`,
-`messages`, `advisor_appointments`) arrive with the phases that need them --
-`document_chunks.embedding` in particular cannot be declared until the embedding
-model, and therefore its vector dimension, is chosen in Phase 3.
+Covers the nine data sheets, plus the two app-owned retrieval tables added in
+Phase 3 (`documents`, `document_chunks`). The remaining app-owned tables from
+CLAUDE.md section 5 (`assistant_settings`, `conversations`, `messages`,
+`advisor_appointments`) arrive with the phases that need them.
 """
 
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import Decimal
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     Time,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+# Fixed by the embedding model chosen in CLAUDE.md section 3: OpenAI
+# text-embedding-3-small at its default 1536 dimensions. A schema fact, so it
+# lives here rather than in config -- changing it is a migration, not a setting,
+# and a value an admin could edit would silently invalidate every stored vector.
+EMBEDDING_DIMENSIONS = 1536
 
 
 # Values the Handbook defines for academic standing. 'Academic dismissal' does not
@@ -354,4 +364,121 @@ class ClassSchedule(Base):
 
     __table_args__ = (
         CheckConstraint("end_time > start_time", name="ck_schedule_times_ordered"),
+    )
+
+
+# --- app-owned: document retrieval (Phase 3) --------------------------------
+
+# 'pending'   -> row exists, nothing parsed yet
+# 'ingesting' -> parse/embed in flight; chunks are incomplete and must not be searched
+# 'ready'     -> chunks embedded and searchable
+# 'failed'    -> see documents.error; chunks were rolled back
+DOCUMENT_STATUSES = ("pending", "ingesting", "ready", "failed")
+
+# What a chunk *is*, which is not the same as which document it came from. The
+# two documents get different chunkers (CLAUDE.md section 4 / PROJECT_PLAN Phase
+# 3), and this records the resulting shape so retrieval can be explained -- and,
+# later, filtered -- without re-parsing.
+CHUNK_KINDS = (
+    "course",        # one Catalogue course entry, description + prerequisite line
+    "program",       # one programme's requirement-category table
+    "policy",        # one numbered Handbook section or subsection
+    "overview",      # narrative front matter in either document
+)
+
+
+class Document(Base):
+    """A source PDF the assistant is allowed to know things from.
+
+    Keyed for re-ingestion by `filename`, not by id: the admin panel's "re-run
+    ingestion" button re-uploads the same file, and the pipeline must replace
+    that document's chunks rather than accumulate a second copy of them.
+    """
+
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    # Human title taken from the document itself, for citations: "Student
+    # Handbook 2026-2027" reads better in an answer than the filename.
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Hash of the file bytes. Lets a re-ingest report "unchanged" honestly, and
+    # ties a set of chunks to the exact file version that produced them -- which
+    # matters because a citation to section 2.3 is only trustworthy if the text
+    # behind it is the text that was embedded.
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Why the last ingestion failed, surfaced by the admin panel. A failed
+    # ingestion that looks identical to an empty one is the thing to avoid.
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(f"status IN {DOCUMENT_STATUSES}", name="ck_documents_status"),
+        CheckConstraint(
+            "page_count IS NULL OR page_count > 0", name="ck_documents_page_count"
+        ),
+    )
+
+
+class DocumentChunk(Base):
+    """One retrievable passage, with everything needed to cite it.
+
+    `section_ref` / `section_title` / `page` are not decoration: CLAUDE.md
+    section 7 rule 5 requires every document-based answer to name its document
+    and section, so a chunk that cannot say where it came from is unusable
+    regardless of how well it matches.
+
+    No vector index. At roughly seventy chunks an exact scan is both faster and
+    *exact*; an IVFFlat index on this little data would trade correctness for a
+    speedup that does not exist. Same reasoning as the "no indexes yet" note in
+    Phase 1 -- revisit when there is a real query plan to improve.
+    """
+
+    __tablename__ = "document_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    # Position in the source document. Makes ingestion deterministic to compare
+    # across runs, and lets a chunk's neighbours be fetched if an answer ever
+    # needs surrounding context.
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The embedded text, including its heading line -- see the chunkers in
+    # `ingestion/`. The heading is part of the content on purpose: "Prerequisite:
+    # MECH 210" is meaningless as a vector without "MECH 310 Fluid Mechanics"
+    # attached to it.
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSIONS), nullable=True
+    )
+    chunk_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Handbook: '1.3', '2.1', '9'. Catalogue: a course code or programme code.
+    section_ref: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    section_title: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # First page the chunk appears on. Sections 6 and 8 of the Handbook run
+    # across a page boundary, so this is deliberately the start page rather than
+    # a single page the whole chunk sits on -- see `ingestion/extract.py`.
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    document: Mapped["Document"] = relationship(back_populates="chunks")
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index", name="uq_chunk_position"),
+        CheckConstraint(f"chunk_kind IN {CHUNK_KINDS}", name="ck_chunk_kind"),
+        CheckConstraint("page IS NULL OR page > 0", name="ck_chunk_page_positive"),
+        CheckConstraint("length(content) > 0", name="ck_chunk_content_not_empty"),
+        # The pipeline embeds in bulk after chunking, so a chunk is briefly
+        # embedding-less; nothing enforces the eventual NOT NULL at the column
+        # level. This index is what retrieval filters on, and it keeps the
+        # delete-and-reinsert per document cheap.
+        Index("ix_chunks_document", "document_id"),
     )

@@ -292,3 +292,171 @@ for every category, which is the capping rule stated as an assertion.
   add/drop/withdraw deadlines are not checked anywhere.
 - **`/me/*` does not exist yet** — see the Phase 2 note above; this is the one
   carry-forward that is a correctness issue rather than a gap.
+
+---
+
+## Phase 3 — document ingestion and retrieval
+
+### Chunking follows the documents' own structure, not a token budget
+
+Neither chunker has a chunk size. Both documents already state where one idea
+ends and the next begins — the Catalogue through its course entries and
+requirement tables, the Handbook through its numbered sections — and a
+fixed-window chunker would ignore that in favour of a number chosen by nobody.
+
+The two strategies, and what each is protecting:
+
+**Catalogue → one chunk per course (33), per programme (2), plus overview.**
+The invariant is that a course is never separated from its prerequisite line.
+A 400-token window over page 3 would routinely end mid-entry, putting one
+course's `Prerequisite:` line in the same chunk as the *next* course's title —
+so "What are the prerequisites for CENG 320?" retrieves a passage that contains
+the string "CENG 320" and a prerequisite line belonging to CENG 330. That is not
+a near miss; it is a confident wrong answer, which CLAUDE.md §7 rule 4 calls the
+worst outcome. `catalogue.py` asserts the count is 33 and that every course chunk
+still contains a prerequisite line, so the invariant cannot regress silently.
+
+**Handbook → one chunk per numbered (sub)section (18), tables intact.**
+Following the numbering keeps every table whole for free, because each lives
+entirely inside one subsection. It also produces the citation as a by-product:
+`section_ref` is the document's own "2.3", not an id we invented, so a citation
+is checkable by a human holding the PDF.
+
+### Extraction is a page-tagged line stream, not a list of pages
+
+Handbook sections 6 (Tuition and Fees) and 8 (Student Services) each run across a
+page boundary in the middle of a table. Chunking page by page would split both —
+including the services directory, one row short of the routing table it feeds.
+So `extract.py` flattens both documents into one stream of lines that each carry
+their page number, and a chunk records the page of its *first* line. Verified by
+inspection: sections 6 and 8 come out as single chunks starting on pages 4 and 5
+and running onto the next.
+
+Running headers are removed by matching the expected four-line block and raising
+if it is not there, rather than dropping the first four lines. A header left in
+would end up embedded and quoted back in an answer; four lines dropped blindly
+would delete real content the first time a page was laid out differently.
+
+### pypdf, and what it does not do
+
+Both PDFs are digitally generated with a clean text layer, so `pypdf` recovers
+them exactly — no OCR, and correct reading order inside tables. Checked page by
+page before the chunkers were written.
+
+What it does *not* do is recover cell structure. A table arrives as one cell per
+line in row-major order, so a routing-table row becomes three consecutive lines
+(enquiry, office, contact). That is contiguous and correct, and legible enough to
+embed and to answer from, but it is flattened. Two visible artefacts: the grading
+scale in 1.1 is a six-column table read as `A / 4.0 / C+ / 2.3 / W / …`, and
+tables continuing across a page repeat their header row inside the chunk. Both
+were left alone — stripping a repeated header risks removing real content, and
+the pairs in 1.1 are recoverable as read.
+
+Accepted with an escape route: if a table question ever fails the test set, the
+fix is a structured table extractor (`pdfplumber`), not a re-chunk. Not done
+pre-emptively, because it is a second parsing dependency bought against a problem
+that has not appeared.
+
+### The heading is inside the chunk, not only beside it
+
+Every chunk opens with a context line naming the document and section, and
+subsection chunks replay their parent section heading. `Prerequisite: MECH 210`
+embeds to nearly nothing on its own; under `MECH 310 Fluid Mechanics` it answers a
+question. Course chunks additionally carry their subject heading, which is what
+makes a query phrased by topic rather than by code land in the right place.
+
+This costs a few tokens per chunk and buys most of the retrieval precision. It is
+also why `section_ref`/`page` are fields on the chunk type rather than metadata
+attached later: a chunk that cannot cite itself is unusable under §7 rule 5, so
+it should not be constructible.
+
+### Section 5 keeps both term calendars in one chunk
+
+Splitting Fall 2026 from Spring 2027 would sharpen retrieval slightly. It was
+rejected: "the last day to drop a course without a W" has a *different answer in
+each term*, and a chunk holding only one of them invites an answer that is
+precisely wrong for the term the student meant. One chunk holding both forces the
+answer to name the term. This is the one place where a deliberately coarser chunk
+is the safer one.
+
+### No vector index, and no hybrid search — yet
+
+58 chunks. An exact sequential scan beats an approximate index at this size and,
+unlike IVFFlat, cannot miss the true nearest neighbour, so `document_chunks`
+carries no index on `embedding`. Same reasoning as Phase 1's "no indexes beyond
+the primary keys": revisit when there is a real query plan to improve.
+
+Likewise the retrieval is pure vector search with no lexical channel. Adding
+Postgres full-text alongside it is the obvious upgrade if an exact-code query
+like "CENG 320" ranks a neighbouring course first — but that is a hypothesis, and
+the six-question test set is what decides it. Building the hybrid first would
+mean never learning whether it was needed.
+
+### Ingestion is re-runnable, and fails without leaving a half-corpus
+
+Keyed on `documents.filename`, delete-and-reinsert, so the admin panel's
+"re-run ingestion" button has something real to call. Three properties chosen
+rather than fallen into:
+
+- **A skip when the bytes are unchanged.** `sha256` on the document row makes
+  re-running free, which is what allows the button to be pressed without thought.
+  `--force` covers the case the hash misses: the file is identical but a chunker
+  changed.
+- **Failure leaves no chunks but does leave a record.** Chunk writes happen in
+  one transaction rolled back on any error; the `documents` row is then updated to
+  `failed` with the message in a *second* transaction, so the diagnosis survives
+  the rollback. A half-ingested document that still answers questions would cite a
+  section it no longer fully contains.
+- **Retrieval filters on `status = 'ready'`**, so the window between deleting old
+  chunks and committing new ones cannot serve a partially rebuilt corpus.
+
+`corpus_status` reports `chunk_count` and `embedded_count` separately, because
+"58 chunks, 0 searchable" is a real state and a single total would hide it.
+
+### Verification is split in two, and the reason matters
+
+`scripts/inspect_chunks.py` prints every chunk and needs neither a database nor an
+API key. `scripts/verify_phase3.py` runs the six-question test set and needs both.
+
+They are separate because **chunk boundaries are the one Phase 3 decision no later
+test can catch**. A wrong boundary does not raise; it produces a passage that
+retrieves well and answers badly. So the boundaries get read by eye, once, in
+full, and the retrieval test is asked a different question.
+
+The test set asserts the *expected section*, not merely that something plausible
+came back. "Retrieval returned something about grading" is not a pass when the
+question was how the GPA is calculated: 1.1 is the scale, 1.2 is the formula, and
+only one of them answers it. Same trap in the calendar case — 2.3 gives the
+add/drop *rule*, section 5 gives the *date*, and only the date is an answer.
+
+### The API key is now genuinely load-bearing
+
+Predicted in the Phase 0 note above; here it arrived. `OPENAI_API_KEY` is optional
+in `Settings` and its absence is not a startup error — every Phase 2 endpoint
+works without it. It fails at the first embedding call, through a dedicated
+`MissingAPIKey` exception that the endpoint turns into a 503 rather than a 500,
+because "not configured" and "the API failed" have different fixes and a generic
+error sends people hunting for a bug.
+
+### Repo layout: the build context widened
+
+`/ingestion` stays a top-level directory (the Phase 0 layout), but the backend
+image now builds from the repo root and copies it to `/app/ingestion`, importable
+as `ingestion` under the existing `PYTHONPATH`. Compose mounts the host copy over
+that path for `--reload`, the same nested-mount trick already used for `.venv`.
+
+The alternative — running ingestion only from the host — was rejected because
+Phase 6's re-ingest button needs to call `pipeline.ingest_all` in-process, and
+discovering that after building the UI would mean a rewrite.
+
+### Still open after Phase 3
+
+- **The six-question test set has not been run.** Everything up to the embedding
+  call is built and hand-verified; the exit check itself needs `OPENAI_API_KEY`
+  and a running database, neither of which was available. Until it passes, Phase 3
+  is not closed.
+- **No lexical/hybrid channel**, by choice — see above. The test set decides.
+- **Table structure is flattened**, not parsed — see the pypdf note.
+- **Nothing re-ingests automatically.** Ingestion is a script; the admin panel
+  endpoint that calls it is Phase 6 work, and `pipeline.ingest_all` is shaped for
+  it but not yet wired to a route.
