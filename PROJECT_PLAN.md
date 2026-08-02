@@ -156,23 +156,56 @@ docker compose exec backend python scripts/verify_phase3.py
 
 ## Phase 4 — Wire the agent (PydanticAI)
 
-- [ ] Start with exactly two tools: `search_documents` and `get_my_schedule`.
+- [x] **Add the `/me/*` surface first** — carried forward from Phase 2 as a
+  correctness issue, not a gap. `/students/{id}/*` takes the ID as a path
+  parameter, which section 7 rule 2 forbids for a student reading their own
+  record. `app/auth.py` (session tokens, hashed, in `student_sessions`) and
+  `app/routers/me.py`, both delegating to the same Phase 2 query functions.
+- [x] Start with exactly two tools: `search_documents` and `get_my_schedule`.
   The goal of this step isn't the tools — it's proving the authenticated
   student ID flows from the HTTP request, into the agent's dependency/context
   object, into the tool call, without the model ever being asked to supply or
   confirm the student ID itself.
-- [ ] Add `get_my_courses`, `get_my_degree_progress` once the pattern above works.
-- [ ] Add session memory: store conversation history (even just in Postgres,
+  Enforced by shape: the scoped tools take **no parameters at all**, so the
+  schema the model sees is `{"properties": {}, "additionalProperties": false}`.
+  There is no field for an injection to fill. The ID travels in `StudentContext`
+  (PydanticAI `deps`), which the model never sees.
+- [x] Add `get_my_courses`, `get_my_degree_progress` once the pattern above works.
+- [x] Add session memory: store conversation history (even just in Postgres,
   keyed by session/student) and pass enough of it back in so "what about next
   term?" resolves without the user repeating themselves.
-- [ ] Wire the admin behaviour config (tone, model, response length, temperature)
+  `conversations`/`messages` (revision `0005`). Each turn is stored twice: prose
+  for the UI, the serialised PydanticAI message for replay — replaying only the
+  prose would drop the tool calls the follow-up depends on. A conversation is
+  student-scoped data and another student's thread is a 404.
+- [x] Wire the admin behaviour config (tone, model, response length, temperature)
   as a DB-backed settings row, read at the start of each request and compiled
   into the system prompt / model call — not read once at startup.
+  `assistant_settings` (one row, enforced by CHECK, seeded in the migration) and
+  `app/assistant_config.py`. Explicitly not cached. The fixed behaviour rules are
+  concatenated before the admin's fragments so settings cannot override them.
 
 **Exit check:** ask the agent "what's my schedule" as two different students in
 two different sessions and confirm each gets only their own data — then try to
 break it by asking "what's S2023011's schedule" as a different student, and
 confirm it refuses.
+
+`backend/scripts/verify_phase4.py`, in two parts:
+
+- **Part 1, structural — PASSING.** Asserts no scoped tool exposes a parameter
+  capable of naming a student. Needs no API key, model or database
+  (`--structural`). This is the real guarantee; a test that only checked the
+  model's *behaviour* would pass on a well-behaved model even if the tools took
+  a `student_id` argument.
+- **Part 2, behavioural — NOT YET RUN.** Two live sessions, the cross-student
+  break attempt, and a follow-up that tests session memory. Needs
+  `OPENAI_API_KEY` and the running stack — the same blocker as Phase 3.
+
+```
+docker compose up -d --build
+docker compose exec backend python scripts/verify_phase4.py --structural   # works now
+docker compose exec backend python scripts/verify_phase4.py                # needs a key
+```
 
 ---
 

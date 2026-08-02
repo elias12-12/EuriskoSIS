@@ -4,10 +4,10 @@ The source spreadsheet is deliberately flat -- no keys, types or constraints
 declared -- so every constraint here is a modelling decision. The ones that
 matter are commented; see DESIGN.md for the longer reasoning.
 
-Covers the nine data sheets, plus the two app-owned retrieval tables added in
-Phase 3 (`documents`, `document_chunks`). The remaining app-owned tables from
-CLAUDE.md section 5 (`assistant_settings`, `conversations`, `messages`,
-`advisor_appointments`) arrive with the phases that need them.
+Covers the nine data sheets, the two app-owned retrieval tables added in Phase 3
+(`documents`, `document_chunks`), and the agent-layer tables added in Phase 4
+(`student_sessions`, `assistant_settings`, `conversations`, `messages`).
+`advisor_appointments` arrives with Phase 5, which is the phase that needs it.
 """
 
 from datetime import date, datetime, time
@@ -29,6 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -481,4 +482,167 @@ class DocumentChunk(Base):
         # level. This index is what retrieval filters on, and it keeps the
         # delete-and-reinsert per document cheap.
         Index("ix_chunks_document", "document_id"),
+    )
+
+
+# --- app-owned: the agent layer (Phase 4) -----------------------------------
+
+
+class StudentSession(Base):
+    """An authenticated student session.
+
+    Not in CLAUDE.md section 5's schema, and added deliberately. The brief says a
+    student ID is sufficient identity and no password infrastructure is required
+    -- but section 7 rule 2 also says every data access is scoped by the
+    *authenticated* ID, enforced in the data layer and never supplied by the
+    client or the model. Something has to hold that identity between the login
+    call and the request, and a table is the honest place for it: no new
+    dependency, revocable, and visible.
+
+    The token is stored as a SHA-256 hash, never in the clear. Login is only a
+    student ID, so a stolen token is no worse than a guessed ID -- but a database
+    dump should not hand over live sessions, and hashing costs one line.
+    """
+
+    __tablename__ = "student_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    student_id: Mapped[str] = mapped_column(
+        ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Not security-critical; it is what lets the admin panel show who is active
+    # and what makes an abandoned session obvious.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    student: Mapped["Student"] = relationship()
+
+    __table_args__ = (
+        CheckConstraint("expires_at > created_at", name="ck_session_expiry_after_start"),
+        Index("ix_sessions_student", "student_id"),
+    )
+
+
+# The admin-configurable vocabularies. Constrained rather than free text because
+# each value maps to a specific instruction fragment in the system prompt: an
+# unrecognised tone would silently produce no instruction at all, which looks
+# like the setting having no effect.
+ASSISTANT_TONES = ("friendly", "neutral", "formal")
+RESPONSE_LENGTHS = ("brief", "standard", "detailed")
+
+
+class AssistantSettings(Base):
+    """The admin panel's behaviour configuration. Exactly one row.
+
+    Read at the start of *every* chat request, not once at startup: PROJECT_PLAN
+    Phase 6 requires that changing a setting changes the very next response with
+    no restart, and that is only true if nothing caches this.
+
+    Deliberately holds no academic policy. The Handbook rules (the C- gate, the
+    attempt limit, the load caps) live in `config.Settings` -- putting them in an
+    admin-editable form would make wrong graduation answers a supported feature.
+    """
+
+    __tablename__ = "assistant_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tone: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Provider-qualified, as PydanticAI expects: 'openai:gpt-5-mini',
+    # 'anthropic:claude-opus-4-5'. Storing the provider with the model is what
+    # makes switching one a settings edit rather than a code change.
+    model_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_length: Mapped[str] = mapped_column(String(16), nullable=False)
+    temperature: Mapped[Decimal] = mapped_column(Numeric(3, 2), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # One row, enforced by the schema rather than by convention. "Which
+        # settings row is live?" is not a question this app should ever have.
+        CheckConstraint("id = 1", name="ck_settings_single_row"),
+        CheckConstraint(f"tone IN {ASSISTANT_TONES}", name="ck_settings_tone"),
+        CheckConstraint(
+            f"response_length IN {RESPONSE_LENGTHS}", name="ck_settings_length"
+        ),
+        CheckConstraint(
+            "temperature >= 0 AND temperature <= 2", name="ck_settings_temperature"
+        ),
+    )
+
+
+class Conversation(Base):
+    """One chat thread.
+
+    `student_id` is nullable per CLAUDE.md section 5 -- an admin trying the
+    assistant from the panel has no student identity -- but a conversation that
+    *has* one is bound to it for life, and `conversations.py` refuses to load a
+    thread for a different student. That check is what stops session memory from
+    becoming a way around the scoping rules: the transcript of another student's
+    conversation is that student's data.
+    """
+
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[str | None] = mapped_column(
+        ForeignKey("students.student_id", ondelete="CASCADE"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Message.id",
+    )
+
+    __table_args__ = (Index("ix_conversations_student", "student_id"),)
+
+
+MESSAGE_ROLES = ("user", "assistant")
+
+
+class Message(Base):
+    """One turn in a conversation, stored twice on purpose.
+
+    `role` and `content` are the human-readable record: what the Phase 6 chat
+    panel renders, and what a person auditing the assistant reads.
+
+    `model_message` is the PydanticAI `ModelMessage` serialised to JSON, and it
+    is what gets replayed as history on the next turn. It is kept because the
+    display projection is lossy -- it drops tool calls and their results -- and
+    replaying only the prose would leave the model unable to see what it already
+    looked up. "What about next term?" resolving correctly depends on it.
+
+    Authoritative for replay: `model_message`. Authoritative for display:
+    `role`/`content`. They are written in the same transaction, from the same
+    run, so they cannot disagree about what happened.
+    """
+
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    model_message: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+    __table_args__ = (
+        CheckConstraint(f"role IN {MESSAGE_ROLES}", name="ck_messages_role"),
+        Index("ix_messages_conversation", "conversation_id"),
     )

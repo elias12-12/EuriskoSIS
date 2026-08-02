@@ -216,3 +216,62 @@ class DocumentStatus(BaseModel):
         )
     )
     error: str | None = None
+
+
+# --- auth and chat (Phase 4) ------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    student_id: str = Field(
+        description="University student ID.", examples=["S2023011"]
+    )
+
+
+class LoginResponse(BaseModel):
+    access_token: str = Field(
+        description="Send as `Authorization: Bearer <token>` on every /me/* request."
+    )
+    token_type: str = "bearer"
+    expires_at: datetime
+    student_id: str
+
+
+class WhoAmI(BaseModel):
+    student_id: str
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, examples=["What's my schedule this term?"])
+    conversation_id: int | None = Field(
+        None,
+        description=(
+            "Omit to start a new thread; pass the id you got back to continue "
+            "one. There is deliberately no student_id field -- identity comes "
+            "from the session."
+        ),
+    )
+
+
+class ChatResponse(BaseModel):
+    conversation_id: int
+    reply: str
+    model_name: str = Field(
+        description="Which model answered, as configured in assistant_settings."
+    )
+    tool_calls: list[str] = Field(
+        description=(
+            "Tools the agent called, in order. Surfaced because 'did it actually "
+            "look anything up?' is the first question when an answer looks wrong."
+        )
+    )
+
+
+class TranscriptMessage(BaseModel):
+    role: str
+    content: str
+    created_at: datetime
+
+
+class Transcript(BaseModel):
+    conversation_id: int
+    messages: list[TranscriptMessage]

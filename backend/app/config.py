@@ -48,6 +48,21 @@ class Settings(BaseSettings):
     # corpus of roughly seventy chunks without burying the model in near-misses.
     retrieval_top_k: int = 5
 
+    # --- Agent layer (Phase 4) ----------------------------------------------
+    # Session lifetime. Login is a student ID with no secret, so this is not
+    # protecting much -- it exists so abandoned sessions do not accumulate
+    # indefinitely, not as a security control.
+    session_ttl_hours: int = 12
+    # How many past messages of a conversation are replayed to the model. The
+    # cap is on turns rather than tokens because it is the honest unit here: a
+    # thread is a handful of short exchanges, and a token budget would be a
+    # guess dressed up as precision. Raise it if follow-ups start losing context.
+    conversation_history_limit: int = 40
+    # Ceiling on tool calls in one agent run. A model that loops between
+    # `search_documents` and `get_my_courses` should fail visibly rather than
+    # bill quietly.
+    agent_max_tool_calls: int = 8
+
     # --- Handbook academic policy -------------------------------------------
     # These are institutional rules quoted from the Student Handbook, not tuning
     # knobs. They live here rather than as literals scattered through queries so

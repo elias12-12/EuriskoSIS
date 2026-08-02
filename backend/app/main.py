@@ -14,14 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_session
-from app.routers import documents, students
+from app.routers import auth, documents, me, students
 
 settings = get_settings()
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.3.0",
-    summary="University assistant API (Phase 3: document retrieval, no agent)",
+    version="0.4.0",
+    summary="University assistant API (Phase 4: agent, session-scoped /me surface)",
 )
 
 router = APIRouter(tags=["health"])
@@ -76,5 +76,9 @@ def health_db(session: Session = Depends(get_session)) -> Any:
 
 
 app.include_router(router)
+app.include_router(auth.router)
+# The student-facing surface. `students.router` below is the admin/by-ID one and
+# must not be called by a student's browser -- see the docstring on each.
+app.include_router(me.router)
 app.include_router(students.router)
 app.include_router(documents.router)

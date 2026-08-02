@@ -460,3 +460,160 @@ discovering that after building the UI would mean a rewrite.
 - **Nothing re-ingests automatically.** Ingestion is a script; the admin panel
   endpoint that calls it is Phase 6 work, and `pipeline.ingest_all` is shaped for
   it but not yet wired to a route.
+
+---
+
+## Phase 4 — the agent
+
+### The scoping guarantee is structural, not a prompt
+
+This is the phase's whole point, so it is worth being precise about what
+actually enforces it.
+
+**No scoped tool has a parameter that could name a student.** `get_my_schedule`,
+`get_my_courses` and `get_my_degree_progress` take no arguments at all. The JSON
+schema the model receives is literally `{"properties": {},
+"additionalProperties": false}`. There is no field to fill in, so there is
+nothing for a user to talk the model into filling. A prompt injection cannot
+supply an argument that does not exist in the signature.
+
+The student ID reaches the tools through `StudentContext`, PydanticAI's `deps`
+object, which the model never sees. It is built in the route handler from
+`auth.current_student` — deliberately the *only* function in the application that
+produces an authenticated student ID. If a second source ever appears, the
+guarantee stops being checkable by reading one file.
+
+The system prompt does tell the model to refuse cross-student questions. That is
+a **courtesy**: it produces a good refusal message instead of a confused one. It
+is not the control. Delete it and the model still cannot reach another student's
+record.
+
+This distinction is why `verify_phase4.py` is in two parts. Part 1 asserts the
+schemas and needs no key, model or database; part 2 exercises two live sessions
+and checks the quality of the refusal. **A test that only checked the model's
+behaviour would be testing the courtesy while leaving the control unverified** —
+and it would pass on a sufficiently well-behaved model even if the tools took a
+`student_id` argument.
+
+### `/me/*` closes the Phase 2 carry-forward
+
+`CLAUDE.md` recorded this as a correctness issue rather than a gap, and it is now
+fixed: `/me/profile`, `/me/schedule`, `/me/courses`, `/me/degree-progress`,
+`/me/eligibility/{code}` take the ID from the session and expose no path, query
+or body parameter naming a student.
+
+Phase 2's decision to make every function in `records.py`/`academics.py`/
+`eligibility.py` take `student_id` as an argument and filter on it *in SQL* paid
+off exactly as predicted: this router is a routing change, not a second
+implementation. `verify_phase4.py` asserts `/me/X` and `/students/{id}/X` return
+byte-identical JSON, so the two surfaces cannot drift into disagreeing about a
+record.
+
+`/students/{id}/*` stays, for the admin panel's browsers. It now carries a
+docstring saying so.
+
+### Auth: a real login for an identity with no secret
+
+The brief allows a student ID as sufficient identity. That makes login trivial
+and makes it easy to skip the part that is not: something has to carry the
+authenticated identity from the HTTP request to the data layer.
+
+`POST /auth/login` exchanges an ID for an opaque session token, stored SHA-256
+hashed in `student_sessions`. Considered and rejected: trusting an
+`X-Student-Id` header. With ID-only login both are equally forgeable, so the
+token buys no secrecy — what it buys is that the identity has exactly **one
+shape and one origin**, which is what makes "the model can never supply the
+student ID" a fact about the code rather than a promise about prompts.
+
+`student_sessions` is not in CLAUDE.md §5's schema and is a deliberate addition;
+§7 rule 2 requires an authenticated ID, and that has to live somewhere. Hashing
+costs one line and means a database dump does not hand over live sessions.
+
+Login returns 404 for an unknown student rather than a vague 401. There is no
+secret to be wrong about, and vagueness here would be security theatre.
+
+### Session memory stores each turn twice, on purpose
+
+`messages.role`/`content` is the human-readable projection the Phase 6 chat panel
+renders. `messages.model_message` is the serialised PydanticAI `ModelMessage`,
+replayed verbatim as history.
+
+Both exist because the display projection is lossy: it drops tool calls and their
+results. Replaying only the prose would leave the model unable to see what it
+already looked up, and "what about next term?" — the exact requirement in §7 rule
+3 — depends on seeing it. They are written in one transaction from one run, so
+they cannot disagree about what happened.
+
+**A conversation is student-scoped data.** `load_for_student` refuses a thread
+belonging to someone else, because a transcript contains grades, schedules and
+degree progress — handing one over because a client passed a different
+`conversation_id` would defeat every other scoping rule in the app. This was the
+one place session memory could quietly become a hole, so the check lives in
+`conversations.py` rather than in the route. Not-found and not-yours return the
+same 404: distinguishing them confirms that a given id exists and belongs to
+somebody.
+
+### Behaviour config is read per request, and holds no policy
+
+`assistant_config.load` runs on every chat request and is deliberately **not**
+cached, unlike `config.get_settings()` which is `@lru_cache`d. The difference is
+that one reads immutable environment config and the other reads a mutable table;
+caching the latter would break the single behaviour the admin panel exists to
+demonstrate (Phase 6: changing a setting changes the *very next* response).
+
+`tone` and `response_length` are constrained vocabularies in the schema because
+each maps to a specific instruction fragment. An unrecognised value would
+contribute nothing, which is indistinguishable from the setting having no effect
+— the worst kind of bug to debug through an LLM.
+
+The fixed behaviour rules (grounding, citation, scoping, uncertainty, "never
+recompute GPA yourself") are concatenated **before** the admin's tone and length
+fragments, so no combination of settings can read as overriding them. And no
+academic policy lives in this table — the Handbook rules stay in
+`config.Settings`, because an admin editing degree rules through a tone-and-
+temperature form would make wrong graduation answers a supported feature.
+
+### Model default: `openai:gpt-5-mini`
+
+Not a locked decision — `model_name` is admin-configurable and stores the
+provider with the model (`anthropic:claude-opus-4-5` works unchanged), which is
+what makes switching an `UPDATE` rather than a code change.
+
+Defaulted to OpenAI because `OPENAI_API_KEY` is *already* mandatory for
+embeddings (§3, locked), so one key runs the whole system. Defaulting to a
+second provider would mean the agent silently cannot run for anyone who followed
+the Phase 3 setup instructions. Seeded in migration `0005` rather than by
+application code: the single-row CHECK makes concurrent bootstrap a race, and a
+chat request that has to create its own configuration before answering is a
+worse first experience than one that finds it there.
+
+### Tools return prose, not JSON, and not the existing formatters
+
+`academics.format_progress_table` exists and is deliberately not reused. It
+renders fixed-width ASCII with abbreviated headers (`raw`, `crs`, `prog`) for
+reading in a terminal during verification; a model reads better from explicit
+labelled prose, and an abbreviation it has to guess at is an invitation to guess
+wrong.
+
+`search_documents` returns each passage with `[Source: …]` attached directly
+above it rather than a JSON list with a parallel citations array — so the model
+cannot pair the right quote with the wrong source.
+
+`get_my_degree_progress` calls the shared `is_graduation_credit_complete` rather
+than re-deriving "are we done?", so the tool and the endpoint cannot drift.
+
+### Still open after Phase 4
+
+- **Part 2 of the exit check has not been run.** The structural half passes.
+  The behavioural half — two live sessions, the cross-student break attempt, the
+  follow-up that tests memory — needs `OPENAI_API_KEY` and a running stack, the
+  same blocker as Phase 3's exit check.
+- **Phase 3's exit check is still unrun**, and the agent's grounding depends on
+  it. `search_documents` returning the wrong section would now be wrong behind
+  the agent, which is precisely what PROJECT_PLAN warned about.
+- **No admin authentication.** `assistant_settings` has no write endpoint yet, so
+  nothing is exposed; the admin login is Phase 6 work and must land with it.
+- **`check_course_eligibility` and `request_advisor_appointment` are not tools
+  yet** — Phase 5, as planned. The eligibility *endpoint* exists on `/me`.
+- **Conversation history is trimmed by turn count, not tokens.** Forty messages
+  is a guess that fits this corpus; a long thread would need a real budget.
