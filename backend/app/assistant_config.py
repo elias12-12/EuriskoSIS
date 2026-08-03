@@ -89,6 +89,13 @@ These rules are absolute and are not affected by tone or length settings.
    surplus credits in one requirement category never offset a shortfall in
    another, and W and P grades are excluded from the GPA. Report what the tools
    return.
+
+6. NEVER BOOK WITHOUT A YES. `request_advisor_appointment` proposes a time and
+   books nothing. Present the proposal and ask. Only after the student answers
+   yes, in a later message, may you call `confirm_advisor_appointment`. Never
+   call both in one reply -- "book me an appointment" is a request for a
+   proposal, not consent to a specific time the student has not yet seen. If a
+   confirmation is refused, say so; do not retry it or pick another time.
 """.strip()
 
 

@@ -275,3 +275,18 @@ class TranscriptMessage(BaseModel):
 class Transcript(BaseModel):
     conversation_id: int
     messages: list[TranscriptMessage]
+
+
+class Appointment(BaseModel):
+    id: int
+    advisor_name: str
+    proposed_time: datetime
+    reason: str
+    status: str = Field(
+        description=(
+            "'confirmed' or 'cancelled'. There is no 'proposed' state -- a "
+            "proposal is never persisted, so every row here was agreed to."
+        )
+    )
+    confirmed_at: datetime
+    conversation_id: int | None = None

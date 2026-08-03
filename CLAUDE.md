@@ -6,14 +6,13 @@ spec, and how I want us to work. Don't re-litigate the decisions marked
 LOCKED — if one seems wrong, say so and ask, don't just change it.
 
 See `PROJECT_PLAN.md` in this same repo for the phase-by-phase build order.
-**Current phase: 4 — the agent — BUILT, EXIT CHECK HALF RUN.**
-Phases 0, 1 and 2 are complete (Phase 2 verified 30 Jul 2026: all five endpoints
-for all five student IDs via Swagger and `scripts/verify_phase2.py`).
-Update this line as we move through phases.
+**Current phase: 5 — eligibility tool and human-in-the-loop — BUILT, EXIT CHECK
+PART RUN.** Phases 0, 1 and 2 are complete (Phase 2 verified 30 Jul 2026: all
+five endpoints for all five student IDs via Swagger and `scripts/verify_phase2.py`).
+**Next: Phase 6 — the UIs.** Update this line as we move through phases.
 
-**Two exit checks are outstanding, both blocked on the same thing: there is no
-`.env` and so no `OPENAI_API_KEY`.** Everything that can be verified without one
-has been.
+**Three exit checks are outstanding, all blocked on the same thing: there is no
+`.env` and so no `OPENAI_API_KEY`.** Everything verifiable without one has been.
 
 - **Phase 3** (revision `0004`, `ingestion/`, `GET /documents/search`): the 58
   chunk boundaries are hand-verified via `scripts/inspect_chunks.py` (no key
@@ -21,14 +20,17 @@ has been.
   not run. Retrieval that is wrong here is wrong behind the agent too, so this
   is the one to close first.
 - **Phase 4** (revision `0005`, `app/agent.py`, `app/auth.py`, `/me/*`,
-  `/me/chat`): `scripts/verify_phase4.py --structural` **passes** — it proves no
-  scoped tool exposes a parameter capable of naming a student, which is the real
-  scoping guarantee. The behavioural half (two live sessions, the cross-student
-  break attempt, the session-memory follow-up) has not run.
+  `/me/chat`): `scripts/verify_phase4.py --structural` **passes** for all seven
+  tools — no tool exposes a parameter capable of naming a student or a
+  conversation, which is the real scoping guarantee. The behavioural half has
+  not run.
+- **Phase 5** (revision `0006`, `app/appointments.py`, three more tools):
+  `scripts/verify_phase5.py --gates` **passes** with nothing required. The
+  five-student MECH 310 matrix needs the database; the chat tests need a key.
 
-To close both: create `.env` from `.env.example` with a key, then
-`docker compose up -d --build`, `scripts/ingest_documents.py`,
-`scripts/verify_phase3.py`, `scripts/verify_phase4.py`.
+To close all three: create `.env` from `.env.example` with a key, then
+`docker compose up -d --build`, `scripts/ingest_documents.py`, and the three
+`verify_phase{3,4,5}.py` scripts.
 
 Resolved in Phase 4 (was a carry-forward from Phase 2): the `/me/*` surface now
 exists and takes the ID from the authenticated session. `/students/{id}/*`

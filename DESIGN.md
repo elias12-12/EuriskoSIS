@@ -617,3 +617,108 @@ than re-deriving "are we done?", so the tool and the endpoint cannot drift.
   yet** — Phase 5, as planned. The eligibility *endpoint* exists on `/me`.
 - **Conversation history is trimmed by turn count, not tokens.** Forty messages
   is a guess that fits this corpus; a long thread would need a real budget.
+
+---
+
+## Phase 5 — eligibility and human-in-the-loop
+
+### "Never auto-books" is two gates, not a prompt
+
+CLAUDE.md §6 requires `request_advisor_appointment` to return a *proposal* and
+require explicit confirmation before persisting. The obvious implementation —
+two tools, plus a system-prompt instruction not to call the second until the
+student agrees — is not good enough, for the same reason the Phase 4 scoping is
+not a prompt. Models do call both in one turn when a user says "book me an
+appointment," because that reads like consent. It isn't: the student has not yet
+seen a time.
+
+So confirmation is structural, via two independent gates:
+
+1. **`propose` is a pure function.** It takes a session only to read the
+   advisor's name, and there is no code path from it to a write.
+   `verify_phase5.py` asserts this on the bytecode's symbol table — a canary
+   rather than a mock, because the property being protected is "nobody adds a
+   `session.add` here later."
+2. **`confirm` requires a proposal in an *earlier turn*.** It reads the
+   conversation's stored message history looking for a prior
+   `request_advisor_appointment` tool call. Because the current turn's messages
+   are persisted only after the run finishes, a proposal made moments ago in the
+   same run is invisible — which is exactly what makes propose-and-confirm in
+   one breath fail.
+
+Gate 2 converts "the student must have had a chance to say no" into a database
+query, which is why it can be tested without an LLM in the loop.
+
+`ctx.deps.conversation_id` carries the thread, deliberately **not** a tool
+argument — a model-supplied conversation id would let it point the gate at a
+conversation where a proposal *did* happen. `verify_phase4.py` now asserts that
+specifically.
+
+### Slot times are generated, never proposed by the model
+
+An appointment time is a fact about the world; a hallucinated one is the
+invented-deadline failure §7 rule 1 forbids. `available_slots` is deterministic,
+skips weekends and never proposes today. `confirm` rejects any time the generator
+would not produce, so a model that invents one fails loudly.
+
+The advising hours are an application default, not Handbook policy — §8 gives the
+Advising Centre's remit and contact but no hours — and the proposal says so
+rather than implying the Handbook specifies them.
+
+### There is no `proposed` status, and no booking endpoint
+
+`advisor_appointments` allows only `confirmed` and `cancelled`. A row means a
+student said yes. Writing `status='proposed'` rows would have made gate 2 easier
+to implement, but it contradicts the plan's contract that the tool "does not
+write to the DB" — and it would make "the assistant booked something I did not
+agree to" merely unlikely rather than impossible.
+
+`GET /me/appointments` has no `POST` counterpart for the same reason: a booking
+endpoint would be a second way in that bypasses the confirmation flow entirely.
+
+`confirm` is idempotent on `(student_id, proposed_time)`, enforced by a unique
+constraint. A model that calls it twice for one agreed slot should not produce
+two appointments, and should not error either — the student's intent was
+satisfied the first time.
+
+### `check_course_eligibility` wraps Phase 2 rather than reimplementing it
+
+The logic was built as a plain endpoint in Phase 2 precisely so this phase would
+be a thin wrapper. The tool renders `reasons` as `[ok]` / `[BLOCKER]` lines
+because the model's job is to *report* the finding, not to weigh it — and the
+prompt tells it not to overrule a refusal because a transcript "looks fine",
+since the load and probation caps are the part that is easy to miss.
+
+An unknown course returns "there is no such course, check the code" rather than
+"ineligible". Answering a question the student did not ask is a confident wrong
+answer.
+
+### Why MECH 310 is asked of all five students
+
+The plan asks for the hybrid question against three; the test uses five, because
+the three CENG students are the interesting negative cases. MECH 310 is not in
+their programme and they have never taken MECH 210 — but "not your programme" is
+not a refusal reason, "you have not passed the prerequisite" is, and a tool that
+shrugged at an out-of-programme course would look correct while answering the
+wrong question.
+
+The pair that matters is Karim and Rania: same course, opposite answers, and
+**for different reasons**. Rania is refused by the 9-credit probation cap, not by
+the prerequisite — she has passed MECH 210. The test asserts the *reason*, not
+just the boolean, because a refusal for the wrong reason would still score as a
+pass on the plan's literal exit check.
+
+### Still open after Phase 5
+
+- **Parts 2 and 3 of the exit check have not been run.** The gates (part 1) pass
+  with nothing required. The five-student eligibility matrix needs the database;
+  the chat tests need a key. Same blocker as Phases 3 and 4.
+- **Cancellation is modelled but unreachable.** `status='cancelled'` is a legal
+  value with no tool or endpoint that sets it.
+- **No advisor calendar.** Slots are generated from office hours, not from
+  availability, so two students can be proposed the same time. Fine at five
+  students; a real deployment needs the advisor's calendar.
+- **The proposal is stateless between turns.** Gate 2 proves *a* proposal
+  happened, not that the confirmed time is the one proposed — that is caught by
+  the slot check instead, which is weaker. Storing proposals would close it, at
+  the cost of the contract above.

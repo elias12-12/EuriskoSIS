@@ -29,16 +29,19 @@ institutional policy, identical for every student (CLAUDE.md section 6).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from pydantic_ai import Agent, RunContext
 from sqlalchemy.orm import Session
 
+from app import appointments
 from app.academics import (
     get_academic_summary,
     get_degree_progress,
     is_graduation_credit_complete,
 )
 from app.config import get_settings
+from app.eligibility import check_eligibility
 from app.records import get_course_history, get_profile, get_schedule
 from app.retrieval import search
 
@@ -60,6 +63,12 @@ class StudentContext:
 
     student_id: str
     session: Session
+    # Which thread this run belongs to. Carried here rather than passed as a tool
+    # argument for the same reason as `student_id`: the appointment confirmation
+    # gate reads this conversation's stored history to prove a proposal came
+    # first, and a model-supplied id would let it point the check at a
+    # conversation where a proposal did happen.
+    conversation_id: int | None = None
 
 
 agent = Agent(
@@ -206,4 +215,161 @@ async def get_my_degree_progress(ctx: RunContext[StudentContext]) -> str:
             if complete
             else f"Categories not yet satisfied: {', '.join(unsatisfied)}."
         )
+    )
+
+
+@agent.tool
+async def check_course_eligibility(
+    ctx: RunContext[StudentContext], course_code: str
+) -> str:
+    """Whether the student you are speaking to may register for a course, and why.
+
+    This is the tool for "Am I allowed to take X?", "Can I register for X?" and
+    "What do I need before X?". It already combines the course's prerequisites,
+    the C- or above rule, how many attempts the student has used, whether the
+    course runs this term, and the credit-load and probation caps. Two students
+    get different answers for the same course; that is correct.
+
+    Report the reasons it gives. Do not add prerequisites of your own, and do not
+    overrule a refusal because the student's transcript looks fine to you -- the
+    caps are the part that is easy to miss.
+
+    Args:
+        course_code: The course code as printed in the Catalogue, e.g. "MECH 310".
+    """
+    result = check_eligibility(ctx.deps.session, ctx.deps.student_id, course_code)
+    if result is None:
+        # Not "you are ineligible": a student asking about a course that does not
+        # exist has made a typo, and answering the question they did not ask
+        # would be a confident wrong answer.
+        return (
+            f"There is no course {course_code!r} in the Catalogue. Check the code "
+            "with the student; do not guess at what they meant."
+        )
+
+    lines = [
+        f"{result['course_code']} {result['title']} ({result['credits']} credits), "
+        f"term {result['term_code']}",
+        f"Eligible: {'yes' if result['eligible'] else 'NO'}",
+    ]
+    if result["requires_advisor_approval"]:
+        lines.append(
+            "Permitted only with the written approval of the academic advisor."
+        )
+
+    if result["prerequisites"]:
+        lines.append("Prerequisites:")
+        lines.extend(
+            f"  - {p['course_code']} {p['title']}: "
+            + (
+                f"met (grade {p['best_grade']})"
+                if p["satisfied"]
+                else (
+                    "in progress, not yet complete"
+                    if p["currently_taking"]
+                    else f"NOT met (best grade so far: {p['best_grade'] or 'never taken'})"
+                )
+            )
+            for p in result["prerequisites"]
+        )
+    else:
+        lines.append("Prerequisites: none.")
+
+    lines.append(
+        f"Standing: {result['academic_status']}. "
+        f"Registered {result['registered_credits']} credits, "
+        f"cap {result['credit_cap']}."
+    )
+    lines.append("Findings:")
+    lines.extend(
+        f"  - [{'ok' if reason['satisfied'] else 'BLOCKER'}] "
+        f"{reason['rule']}: {reason['detail']}"
+        for reason in result["reasons"]
+    )
+    if result["notes"]:
+        lines.extend(f"  note: {note}" for note in result["notes"])
+
+    return "\n".join(lines)
+
+
+@agent.tool
+async def request_advisor_appointment(
+    ctx: RunContext[StudentContext], reason: str
+) -> str:
+    """Propose a meeting with the student's academic advisor. **Books nothing.**
+
+    Returns a suggested advisor, date and time. Present it to the student and ask
+    whether they want it booked. Do NOT call `confirm_advisor_appointment` in the
+    same reply -- the student has not answered yet, and the confirmation will be
+    refused if you try.
+
+    Use this when a question genuinely needs a human: probation planning, a
+    prerequisite waiver, a study plan, or anything the documents do not settle.
+
+    Args:
+        reason: Why the student wants to see their advisor, in one short phrase.
+    """
+    try:
+        proposal = appointments.propose(ctx.deps.session, ctx.deps.student_id, reason)
+    except LookupError:
+        return "No record found for the current student."
+
+    return (
+        f"PROPOSAL ONLY - nothing has been booked.\n"
+        f"{proposal.describe()}\n"
+        f"Confirmed time to pass back if the student agrees: "
+        f"{proposal.proposed_time.isoformat()}\n"
+        "Ask the student to confirm before booking. If they want a different "
+        "time, say that the Advising Centre (advising@eurisko.edu) can arrange "
+        "one; do not invent alternative slots."
+    )
+
+
+@agent.tool
+async def confirm_advisor_appointment(
+    ctx: RunContext[StudentContext], proposed_time: str, reason: str
+) -> str:
+    """Book an appointment the student has just explicitly agreed to.
+
+    Only call this after you proposed a time in an earlier reply AND the student
+    answered yes. It will refuse otherwise -- that refusal is a safety check, not
+    an error to work around, so do not retry it or invent a different time.
+
+    Args:
+        proposed_time: The exact ISO timestamp from the proposal.
+        reason: The reason from the proposal.
+    """
+    if ctx.deps.conversation_id is None:
+        return "Cannot book an appointment outside a conversation."
+
+    try:
+        when = datetime.fromisoformat(proposed_time)
+    except ValueError:
+        return (
+            f"{proposed_time!r} is not a valid timestamp. Use the exact value "
+            "from the proposal."
+        )
+
+    try:
+        appointment = appointments.confirm(
+            ctx.deps.session,
+            ctx.deps.student_id,
+            conversation_id=ctx.deps.conversation_id,
+            proposed_time=when,
+            reason=reason,
+        )
+    except appointments.NotProposedFirst as exc:
+        return (
+            f"REFUSED: {exc} Nothing has been booked. Propose a time, then wait "
+            "for the student's answer."
+        )
+    except appointments.NoSuchSlot as exc:
+        return f"REFUSED: {exc} Nothing has been booked."
+    except LookupError:
+        return "No record found for the current student."
+
+    return (
+        f"Booked: {appointment.advisor_name} on "
+        f"{appointment.proposed_time:%A %d %B %Y at %H:%M}. "
+        f"Reason: {appointment.reason}."
     )

@@ -211,21 +211,47 @@ docker compose exec backend python scripts/verify_phase4.py                # nee
 
 ## Phase 5 — Eligibility tool and human-in-the-loop
 
-- [ ] `check_course_eligibility(course_code)`: combine (a) prerequisite list from
+- [x] `check_course_eligibility(course_code)`: combine (a) prerequisite list from
   `course_prerequisites`, (b) whether each prerequisite was passed at C- or
   above, (c) Handbook load/probation constraints if relevant, (d) course-load
   cap for probation students. Test against Rania specifically — she's the
   probation case this tool exists for.
-- [ ] `request_advisor_appointment(...)`: the tool returns a **proposed**
+  A thin wrapper over the Phase 2 endpoint, which is why that was built first.
+  Renders `reasons` as `[ok]`/`[BLOCKER]` lines; the model reports the finding
+  rather than weighing it.
+- [x] `request_advisor_appointment(...)`: the tool returns a **proposed**
   appointment object (time, advisor, reason) — it does not write to the DB.
   The agent presents the proposal in chat; only an explicit follow-up
   confirmation from the user triggers a second call that actually persists it.
-- [ ] Test the full hybrid question from the brief end to end: *"Am I allowed
+  Enforced by two gates, not by the prompt: `propose` has no code path to a
+  write, and `confirm` requires a proposal in an **earlier turn** — the current
+  turn's messages are not persisted until the run ends, so propose-and-confirm
+  in one breath fails. `advisor_appointments` (revision `0006`) has no
+  `proposed` status and there is no booking endpoint.
+- [x] Test the full hybrid question from the brief end to end: *"Am I allowed
   to register for MECH 310?"* for Karim and for Rania — should give different
   answers for the same course based on their individual transcripts.
 
 **Exit check:** the hybrid eligibility question above works correctly for at
 least 3 of the 5 students, including one who should be told "no."
+
+`backend/scripts/verify_phase5.py`, in three parts by what each needs:
+
+- **Part 1, the gates — PASSING, needs nothing** (`--gates`): no database, API,
+  key or model. `propose` cannot write; slots are deterministic, never same-day,
+  never at a weekend; an invented time is not a slot.
+- **Part 2, the eligibility matrix — NOT YET RUN, needs the database**
+  (`--structural`): all five students against MECH 310. Asserts Rania is refused
+  **by the probation credit cap, not the prerequisite** — a refusal for the wrong
+  reason would still pass the exit check as literally worded.
+- **Part 3, through the agent — NOT YET RUN, needs a key**: the question asked as
+  Karim and as Rania, then an attempt to make the agent book in a single turn.
+
+```
+docker compose exec backend python scripts/verify_phase5.py --gates         # works now
+docker compose exec backend python scripts/verify_phase5.py --structural    # needs the db
+docker compose exec backend python scripts/verify_phase5.py                 # needs a key
+```
 
 ---
 

@@ -646,3 +646,68 @@ class Message(Base):
         CheckConstraint(f"role IN {MESSAGE_ROLES}", name="ck_messages_role"),
         Index("ix_messages_conversation", "conversation_id"),
     )
+
+
+# --- app-owned: human-in-the-loop (Phase 5) ---------------------------------
+
+# 'confirmed' -> the student explicitly agreed, in a later turn, to a proposal
+# 'cancelled' -> confirmed and then withdrawn
+#
+# There is deliberately no 'proposed' state. A proposal is never written here:
+# PROJECT_PLAN Phase 5 requires the tool to return a proposal object *without*
+# touching the database, so that "the assistant booked something I did not agree
+# to" is impossible rather than merely unlikely. A row in this table means a
+# student said yes.
+APPOINTMENT_STATUSES = ("confirmed", "cancelled")
+
+
+class AdvisorAppointment(Base):
+    """A confirmed meeting with an academic advisor.
+
+    The human-in-the-loop case from CLAUDE.md section 6: the agent may *propose*
+    an appointment, and only an explicit follow-up confirmation persists one.
+    See `app/appointments.py` for how that is enforced structurally rather than
+    by asking the model nicely.
+    """
+
+    __tablename__ = "advisor_appointments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[str] = mapped_column(
+        ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False
+    )
+    # Denormalised from students.advisor_name at confirmation time. The advisor
+    # of record can change; who the student actually agreed to meet cannot.
+    advisor_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    proposed_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Which conversation produced this. The audit trail for "why does the
+    # student have an appointment they do not remember making?" -- and what the
+    # confirmation guard reads to prove a proposal came first.
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    confirmed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    student: Mapped["Student"] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN {APPOINTMENT_STATUSES}", name="ck_appointment_status"
+        ),
+        # One appointment per student per slot. Guards against a model that
+        # calls the confirmation tool twice for the same agreed time -- the
+        # student said yes once, so there should be one appointment.
+        UniqueConstraint(
+            "student_id", "proposed_time", name="uq_appointment_student_slot"
+        ),
+        Index("ix_appointments_student", "student_id"),
+    )

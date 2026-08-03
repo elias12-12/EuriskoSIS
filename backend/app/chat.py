@@ -67,7 +67,11 @@ def send(
     # this app has no evidence of needing.
     result = agent.run_sync(
         message,
-        deps=StudentContext(student_id=student_id, session=session),
+        deps=StudentContext(
+            student_id=student_id,
+            session=session,
+            conversation_id=conversation.id,
+        ),
         model=config.model_name,
         instructions=config.instructions(),
         message_history=conversations.history(session, conversation.id),

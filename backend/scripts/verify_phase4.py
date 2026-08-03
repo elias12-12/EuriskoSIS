@@ -35,14 +35,35 @@ import httpx
 
 BASE = "http://localhost:8000"
 
-# Tools that must be scoped to the session, and therefore must expose no
-# parameter through which a student could be named.
-SCOPED_TOOLS = ("get_my_schedule", "get_my_courses", "get_my_degree_progress")
+# Tools that return the student's own record and take nothing at all. The
+# strongest form of the guarantee: there is no argument to fill in.
+NO_PARAM_TOOLS = ("get_my_schedule", "get_my_courses", "get_my_degree_progress")
+
+# Scoped tools that legitimately take arguments -- a course code, a reason, a
+# time. They must still expose no way to name a *student*, and no way to name a
+# *conversation*: `confirm_advisor_appointment` proves consent by reading the
+# stored history of `ctx.deps.conversation_id`, so a model-supplied one would let
+# it point the check at a conversation where a proposal did happen (Phase 5).
+SCOPED_TOOLS_WITH_ARGS = (
+    "check_course_eligibility",
+    "request_advisor_appointment",
+    "confirm_advisor_appointment",
+)
+
+# Not scoped, correctly: the corpus is institutional policy, identical for all.
 UNSCOPED_TOOLS = ("search_documents",)
 
-# Anything that looks like a way to name a student. Checked as substrings so a
-# future `for_student` or `studentId` is caught too.
-FORBIDDEN_PARAM_HINTS = ("student", "user", "person", "who", "id")
+# Anything that looks like a way to name a student or a thread. Checked as
+# substrings so a future `for_student`, `studentId` or `conversation` is caught.
+FORBIDDEN_PARAM_HINTS = (
+    "student",
+    "user",
+    "person",
+    "who",
+    "conversation",
+    "thread",
+    "session",
+)
 
 # Two students with visibly different records: Maya is a 4th-year on track,
 # Rania is a 2nd-year on probation. If scoping ever broke, these two would not
@@ -83,14 +104,17 @@ def structural_checks() -> None:
     )
 
     tools = {tool.name: tool for tool in model.last_model_request_parameters.function_tools}
+    expected = set(NO_PARAM_TOOLS) | set(SCOPED_TOOLS_WITH_ARGS) | set(UNSCOPED_TOOLS)
     check(
         structural_failures,
-        "all four tools are registered",
-        set(tools) == set(SCOPED_TOOLS) | set(UNSCOPED_TOOLS),
-        f"got {sorted(tools)}",
+        "every expected tool is registered, and no unexpected one",
+        set(tools) == expected,
+        f"got {sorted(tools)}, expected {sorted(expected)}",
     )
 
-    for name in SCOPED_TOOLS:
+    # Every tool, whatever its arguments, must be unable to name a student or a
+    # conversation. This is the assertion that has to hold as tools are added.
+    for name in sorted(expected):
         tool = tools.get(name)
         if tool is None:
             check(structural_failures, f"{name} exists", False)
@@ -99,13 +123,6 @@ def structural_checks() -> None:
         schema = tool.parameters_json_schema
         properties = schema.get("properties", {})
 
-        # The core assertion of the whole phase.
-        check(
-            structural_failures,
-            f"{name} takes no parameters at all",
-            properties == {},
-            f"exposes {sorted(properties)}",
-        )
         check(
             structural_failures,
             f"{name} forbids additional properties",
@@ -119,9 +136,31 @@ def structural_checks() -> None:
         ]
         check(
             structural_failures,
-            f"{name} has no student-identifying parameter",
+            f"{name} cannot name a student or conversation",
             not offending,
             f"{offending}",
+        )
+
+    # The strongest form, for the three that return the student's own record:
+    # not merely "no identifying argument" but no argument at all.
+    for name in NO_PARAM_TOOLS:
+        properties = tools[name].parameters_json_schema.get("properties", {})
+        check(
+            structural_failures,
+            f"{name} takes no parameters at all",
+            properties == {},
+            f"exposes {sorted(properties)}",
+        )
+
+    # Phase 5's gate depends on this specifically.
+    confirm = tools.get("confirm_advisor_appointment")
+    if confirm is not None:
+        properties = confirm.parameters_json_schema.get("properties", {})
+        check(
+            structural_failures,
+            "confirm_advisor_appointment cannot choose its own conversation",
+            not any("conversation" in key.lower() for key in properties),
+            f"exposes {sorted(properties)}",
         )
 
     # search_documents is correctly unscoped -- the corpus is identical for

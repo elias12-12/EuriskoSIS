@@ -17,6 +17,7 @@ into disagreeing about a student's record.
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 
+from app import appointments
 from app import chat as chat_service
 from app import conversations
 from app.academics import get_academic_summary, get_degree_progress
@@ -26,6 +27,7 @@ from app.db import get_session
 from app.eligibility import check_eligibility
 from app.records import get_course_history, get_profile, get_schedule
 from app.schemas import (
+    Appointment,
     ChatRequest,
     ChatResponse,
     CourseHistory,
@@ -169,6 +171,32 @@ def chat(
         model_name=turn.model_name,
         tool_calls=turn.tool_calls,
     )
+
+
+@router.get("/appointments", response_model=list[Appointment])
+def my_appointments(
+    student_id: str = Depends(current_student),
+    session: Session = Depends(get_session),
+) -> list[Appointment]:
+    """Your confirmed advisor appointments, soonest first.
+
+    There is no POST here on purpose. An appointment is only ever created by the
+    student confirming a proposal in chat, which is the human-in-the-loop
+    requirement of CLAUDE.md section 6 -- a booking endpoint would be a second
+    way in that bypasses it.
+    """
+    return [
+        Appointment(
+            id=appointment.id,
+            advisor_name=appointment.advisor_name,
+            proposed_time=appointment.proposed_time,
+            reason=appointment.reason,
+            status=appointment.status,
+            confirmed_at=appointment.confirmed_at,
+            conversation_id=appointment.conversation_id,
+        )
+        for appointment in appointments.for_student(session, student_id)
+    ]
 
 
 @router.get("/conversations/{conversation_id}", response_model=Transcript)
