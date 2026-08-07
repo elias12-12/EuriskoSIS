@@ -38,6 +38,21 @@ services:
       # comes only from the untracked .env. Empty until one is supplied, which
       # fails at the embedding call with a clear message rather than at startup.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Only needed if the assistant's model is switched to an anthropic:* one
+      # in the admin panel; ignored otherwise.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Pydantic AI Gateway. One key covers both halves of the app: the agent
+      # via `gateway/openai:...` model names, and embeddings via the gateway's
+      # OpenAI-compatible route. Use this OR OPENAI_API_KEY, not necessarily both.
+      PYDANTIC_AI_GATEWAY_API_KEY: ${PYDANTIC_AI_GATEWAY_API_KEY:-}
+      PYDANTIC_AI_GATEWAY_BASE_URL: ${PYDANTIC_AI_GATEWAY_BASE_URL:-}
+      # The admin panel's shared password. A throwaway dev default, exactly like
+      # the Postgres credentials above, so a clean clone runs with no .env. It is
+      # a real credential in any deployment -- override it there.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-eurisko_admin}
+      # Where admin-uploaded document replacements land. Must not be inside the
+      # read-only /data mount.
+      UPLOAD_DIR: /uploads
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -45,23 +60,47 @@ services:
         condition: service_healthy
     volumes:
       # Source is bind-mounted so --reload picks up edits without a rebuild.
+      # No anonymous volume is needed to protect the venv: it lives at /opt/venv,
+      # outside this mount. See backend/Dockerfile for why that matters -- an
+      # anonymous volume here survives `up --build` and silently serves the venv
+      # from the first-ever build.
       - ./backend:/app
-      # ...but the host .venv is Windows-native, so an anonymous volume keeps the
-      # container's Linux venv from being shadowed by the bind mount above.
-      - /app/.venv
-      # Same reason, for the ingestion package: it lives at the repo root but is
-      # imported as `ingestion` from /app, so it mounts over the copy the image
-      # already contains. Nested inside the /app mount above, which Docker allows.
+      # The ingestion package lives at the repo root but is imported as
+      # `ingestion` from /app, so it mounts over the copy the image already
+      # contains. Nested inside the /app mount above, which Docker allows.
       - ./ingestion:/app/ingestion
       # The dataset is frozen ("Do not edit. Any change invalidates comparison
       # across teams"), so it is mounted read-only and the container cannot
       # corrupt it even by accident.
       - ./data:/data:ro
+      # Admin-uploaded replacements. A named volume rather than a bind mount:
+      # it survives a rebuild, and it keeps uploads out of the working tree
+      # where they could be committed by accident.
+      - uploads:/uploads
     # Migrations run on start, so the database schema is never a manual step
     # someone forgets after a fresh clone.
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
+  frontend:
+    build: ./frontend
+    environment:
+      # The browser runs on the host, so it reaches the API through the
+      # published port -- not through the compose network, where `backend`
+      # resolves but only from inside another container.
+      VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      - backend
+    volumes:
+      # Source bind-mounted for HMR, with an anonymous volume shadowing
+      # node_modules -- the host copy is Windows-native and would break the
+      # Linux install inside the image. Same trick as the backend's .venv.
+      - ./frontend:/app
+      - /app/node_modules
+
 volumes:
   pgdata:
+  uploads:

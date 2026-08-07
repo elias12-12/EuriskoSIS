@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_session
-from app.models import Student, StudentSession
+from app.models import AdminSession, Student, StudentSession
 
 # Sent as `Authorization: Bearer <token>`.
 _BEARER_PREFIX = "bearer "
@@ -140,3 +140,72 @@ def current_student(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return student_id
+
+
+# --- administrator sessions (Phase 6) ---------------------------------------
+#
+# Kept in this file so that every authenticated principal in the application is
+# minted in one place. They are separate *tables* and separate dependencies --
+# `current_student` can never return an admin and `current_admin` can never
+# return a student -- but if a reviewer wants to know how identity works here,
+# there is exactly one file to read.
+
+
+def admin_login(session: Session, password: str) -> tuple[str, datetime]:
+    """Exchange the shared admin password for a session token.
+
+    Compared with `secrets.compare_digest` rather than `==`. The timing leak from
+    a naive comparison is not a realistic threat against a local dev stack, but
+    the correct comparison costs nothing and the wrong one is the kind of thing
+    that gets copied into somewhere it matters.
+    """
+    expected = get_settings().admin_password
+    if not secrets.compare_digest(password, expected):
+        raise HTTPException(status_code=401, detail="Incorrect administrator password")
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        hours=get_settings().admin_session_ttl_hours
+    )
+    session.add(AdminSession(token_hash=_hash(token), expires_at=expires_at))
+    session.commit()
+    return token, expires_at
+
+
+def admin_logout(session: Session, token: str) -> None:
+    session.execute(delete(AdminSession).where(AdminSession.token_hash == _hash(token)))
+    session.commit()
+
+
+def current_admin(
+    token: str = Depends(current_student_token),
+    session: Session = Depends(get_session),
+) -> bool:
+    """FastAPI dependency: proves the caller is an administrator, or 401.
+
+    Returns a bool rather than an identity because there is only one
+    administrator principal. Every `/admin/*` route depends on this, and nothing
+    else does -- an endpoint that takes neither `current_student` nor
+    `current_admin` is unauthenticated, which makes the audit a grep.
+    """
+    record = session.get(AdminSession, _hash(token))
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Administrator session required. POST /admin/login first.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    now = datetime.now(timezone.utc)
+    if record.expires_at <= now:
+        session.delete(record)
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Administrator session has expired. Log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    record.last_seen_at = now
+    session.commit()
+    return True

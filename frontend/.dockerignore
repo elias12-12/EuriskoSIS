@@ -1,0 +1,7 @@
+# The host node_modules is built for Windows and would break the Linux install
+# inside the image. Never let it into the build context.
+node_modules/
+dist/
+.vite/
+.env
+.env.local

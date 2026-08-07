@@ -134,8 +134,28 @@ def ingest_document(
     )
 
 
+def resolve_source(filename: str, data_dir: Path, upload_dir: Path | None) -> Path:
+    """Where to read a document from: an admin upload if there is one, else the
+    shipped copy.
+
+    The upload directory wins deliberately. `data/` is bind-mounted read-only
+    because the dataset is frozen, so a replacement uploaded through the admin
+    panel has to live somewhere else -- and deleting it reverts to the shipped
+    document rather than leaving the corpus in an unrecoverable state.
+    """
+    if upload_dir is not None:
+        uploaded = upload_dir / filename
+        if uploaded.exists():
+            return uploaded
+    return data_dir / filename
+
+
 def ingest_all(
-    session: Session, data_dir: Path, *, force: bool = False
+    session: Session,
+    data_dir: Path,
+    *,
+    force: bool = False,
+    upload_dir: Path | None = None,
 ) -> list[IngestResult]:
     """Ingest every document the assistant is allowed to know things from.
 
@@ -145,7 +165,7 @@ def ingest_all(
     """
     results = []
     for filename in CHUNKERS:
-        path = data_dir / filename
+        path = resolve_source(filename, data_dir, upload_dir)
         if not path.exists():
             results.append(
                 IngestResult(

@@ -5,10 +5,17 @@ FROM python:3.12-slim
 # dependencies exactly the way the host did.
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /bin/
 
+# The venv lives OUTSIDE /app on purpose. Compose bind-mounts ./backend over
+# /app for --reload, which would hide a venv inside it; the usual fix is an
+# anonymous volume at /app/.venv, but anonymous volumes survive `up --build`, so
+# the venv from the first-ever build keeps shadowing every later one. That is a
+# ModuleNotFoundError for any dependency added after day one, and it looks like
+# a broken image rather than a stale mount. Putting it at /opt/venv means the
+# bind mount cannot reach it and there is nothing to shadow.
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/app/.venv \
-    PATH="/app/.venv/bin:$PATH" \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1
 

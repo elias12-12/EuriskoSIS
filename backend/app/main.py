@@ -4,9 +4,11 @@ Phase 0 scope only: the app exists, it starts, and it can prove it reaches
 Postgres. No domain routes yet -- those arrive in Phase 2.
 """
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,15 +16,59 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_session
-from app.routers import auth, documents, me, students
+from app.routers import admin, auth, documents, me, students
+
+logger = logging.getLogger("app")
 
 settings = get_settings()
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.4.0",
-    summary="University assistant API (Phase 4: agent, session-scoped /me surface)",
+    version="0.6.0",
+    summary="University assistant API (Phase 6: student portal and admin panel)",
 )
+
+# The React app is served by Vite on a different port, so without this every
+# browser request fails preflight. An explicit origin list rather than "*":
+# these requests carry an Authorization header, and a wildcard origin with
+# credentials is both refused by browsers and the wrong thing to want.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(Exception)
+def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Return a JSON 500 that still carries CORS headers.
+
+    Without this, an unhandled exception is turned into a response by Starlette's
+    `ServerErrorMiddleware`, which sits *outside* `CORSMiddleware` -- so the 500
+    arrives with no `Access-Control-Allow-Origin` and the browser refuses to read
+    it. The frontend then reports `TypeError: Failed to fetch`, which says
+    nothing at all: no status, no message, and it looks like the API is down
+    rather than like one endpoint raised.
+
+    Registering a handler here puts the response back inside the middleware
+    stack, so it comes back out through CORS like any other. The traceback is
+    still logged; only the browser's view of it improves.
+
+    Found the hard way, from a chat request failing with `Failed to fetch` while
+    every other endpoint worked.
+    """
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": (
+                f"{type(exc).__name__}: {exc}. See the backend logs for the "
+                "traceback (`docker compose logs backend`)."
+            )
+        },
+    )
 
 router = APIRouter(tags=["health"])
 
@@ -82,3 +128,4 @@ app.include_router(auth.router)
 app.include_router(me.router)
 app.include_router(students.router)
 app.include_router(documents.router)
+app.include_router(admin.router)

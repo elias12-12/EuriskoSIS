@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from decimal import Decimal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -233,7 +234,9 @@ class LoginResponse(BaseModel):
     )
     token_type: str = "bearer"
     expires_at: datetime
-    student_id: str
+    # Null for an administrator session: the admin is not a student and has no
+    # student record. Shared shape so the frontend has one login flow.
+    student_id: str | None = None
 
 
 class WhoAmI(BaseModel):
@@ -275,6 +278,71 @@ class TranscriptMessage(BaseModel):
 class Transcript(BaseModel):
     conversation_id: int
     messages: list[TranscriptMessage]
+
+
+# --- admin panel (Phase 6) --------------------------------------------------
+
+
+class AdminLoginRequest(BaseModel):
+    password: str = Field(description="The shared administrator password.")
+
+
+class AssistantSettingsResponse(BaseModel):
+    tone: str
+    model_name: str
+    response_length: str
+    temperature: Decimal
+
+
+class AssistantSettingsUpdate(BaseModel):
+    """The admin panel's behaviour form.
+
+    The vocabularies are constrained here as well as in the database CHECK so a
+    bad value is a 422 naming the field, rather than an IntegrityError surfacing
+    as a 500. Same rule stated in two places on purpose: the schema is what makes
+    it true, this is what makes it explainable.
+    """
+
+    tone: Literal["friendly", "neutral", "formal"]
+    model_name: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "Provider-qualified, e.g. 'openai:gpt-5-mini' or "
+            "'anthropic:claude-opus-4-5'. Switching provider also needs that "
+            "provider's API key in the environment."
+        ),
+    )
+    response_length: Literal["brief", "standard", "detailed"]
+    temperature: Decimal = Field(ge=0, le=2)
+
+
+class IngestReport(BaseModel):
+    filename: str
+    status: str
+    chunk_count: int
+    page_count: int | None = None
+    unchanged: bool = Field(
+        description="True when the file was unchanged and re-embedding was skipped."
+    )
+    error: str | None = None
+
+
+class BrowsePage(BaseModel):
+    total: int = Field(
+        description="Rows matching the filter, not rows in the table."
+    )
+    items: list[dict[str, Any]]
+
+
+class FilterOptions(BaseModel):
+    """Dropdown values for the browsers, queried from the data."""
+
+    programs: list[str]
+    academic_statuses: list[str]
+    terms: list[str]
+    grades: list[str]
+    subjects: list[str]
 
 
 class Appointment(BaseModel):

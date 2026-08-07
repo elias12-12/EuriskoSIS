@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Where the three source files live. Defaults to the container mount point;
     # override with DATA_DIR when running on the host.
     data_dir: Path = Path("/data")
+    # Where admin-uploaded replacements go. Separate from `data_dir` because that
+    # is mounted read-only on purpose -- the dataset is frozen, and an upload
+    # must never overwrite it. Ingestion prefers a file here when one exists, so
+    # deleting the upload reverts to the shipped document.
+    upload_dir: Path = Path("/uploads")
 
     # --- Retrieval (Phase 3) -------------------------------------------------
     # Locked in CLAUDE.md section 3. The vector *dimension* is not here: it is a
@@ -44,9 +49,26 @@ class Settings(BaseSettings):
     # error: the API serves every Phase 2 endpoint without it. It fails at the
     # first embedding call instead, where the message can say what is missing.
     openai_api_key: str | None = None
+    # Only needed when the admin points `assistant_settings.model_name` at an
+    # anthropic:* model. Declared here so the chat path can check for the key its
+    # *configured* provider needs, rather than assuming OpenAI.
+    anthropic_api_key: str | None = None
+    # Pydantic AI Gateway: one key that proxies to several upstream providers.
+    # Supported natively by PydanticAI (`gateway/openai:gpt-5-mini`) and, because
+    # its OpenAI route is API-compatible, usable for embeddings too -- so a single
+    # gateway key runs both halves of this application. Verified against the live
+    # gateway: chat completions and text-embedding-3-small at 1536 dimensions.
+    pydantic_ai_gateway_api_key: str | None = None
+    # Normally derived from the region encoded in the key; set only to override.
+    pydantic_ai_gateway_base_url: str | None = None
     # How many chunks a search returns. Five is enough for a cited answer over a
     # corpus of roughly seventy chunks without burying the model in near-misses.
     retrieval_top_k: int = 5
+    # How many candidates each channel contributes to the fusion before the top-k
+    # is taken. Wider than top_k on purpose: a chunk that one channel ranks 12th
+    # and the other ranks 2nd should still be able to win, and a narrow candidate
+    # list would have discarded it before the fusion ever saw it.
+    retrieval_candidates: int = 25
 
     # --- Agent layer (Phase 4) ----------------------------------------------
     # Session lifetime. Login is a student ID with no secret, so this is not
@@ -62,6 +84,19 @@ class Settings(BaseSettings):
     # `search_documents` and `get_my_courses` should fail visibly rather than
     # bill quietly.
     agent_max_tool_calls: int = 8
+
+    # --- Admin panel (Phase 6) ----------------------------------------------
+    # The brief gives the admin "a separate, simpler login": one shared password,
+    # no per-administrator accounts. Required, with no default, for the same
+    # reason `database_url` has none -- a default admin password is a credential
+    # that ships. Compose supplies a throwaway dev value inline so a clean clone
+    # still runs, exactly as it does for the Postgres credentials.
+    admin_password: str
+    admin_session_ttl_hours: int = 8
+    # Origins the browser app is served from. The Vite dev server runs on a
+    # different port from the API, so without this every request fails CORS.
+    # A list rather than "*" because credentials are sent on these requests.
+    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     # --- Handbook academic policy -------------------------------------------
     # These are institutional rules quoted from the Student Handbook, not tuning

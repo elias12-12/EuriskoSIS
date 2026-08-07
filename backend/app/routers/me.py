@@ -164,6 +164,10 @@ def chat(
         raise HTTPException(
             status_code=404, detail="No such conversation"
         ) from None
+    except chat_service.MissingModelKey as exc:
+        # 503, matching /documents/search: the service is correctly built and
+        # temporarily unable to do this, and the message says what is missing.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return ChatResponse(
         conversation_id=turn.conversation_id,

@@ -240,10 +240,14 @@ least 3 of the 5 students, including one who should be told "no."
 - **Part 1, the gates — PASSING, needs nothing** (`--gates`): no database, API,
   key or model. `propose` cannot write; slots are deterministic, never same-day,
   never at a weekend; an invented time is not a slot.
-- **Part 2, the eligibility matrix — NOT YET RUN, needs the database**
-  (`--structural`): all five students against MECH 310. Asserts Rania is refused
-  **by the probation credit cap, not the prerequisite** — a refusal for the wrong
-  reason would still pass the exit check as literally worded.
+- **Part 2, the eligibility matrix — PASSING** (`--structural`, needs the
+  database): all five students against MECH 310, asserting **which rule blocks**
+  each one — a refusal for the wrong reason would still pass the exit check as
+  literally worded. Karim is blocked only by his existing registration (he is
+  the one student who has passed MECH 210); Rania by the prerequisite *and*,
+  independently, the 9-credit probation cap. Since nobody can register for
+  MECH 310 this term, the yes/no split is proved on ENGR 450 instead, which
+  Karim may take and Rania may not.
 - **Part 3, through the agent — NOT YET RUN, needs a key**: the question asked as
   Karim and as Rania, then an attempt to make the agent book in a single turn.
 
@@ -257,15 +261,46 @@ docker compose exec backend python scripts/verify_phase5.py                 # ne
 
 ## Phase 6 — UIs
 
-- [ ] Student portal: profile, schedule, history, GPA/credits, degree progress
+- [x] **Admin authentication** — carried into this phase from Phase 4.
+  `admin_sessions` (revision `0007`), a shared password from the environment per
+  the brief's "separate, simpler login". A *separate table* from
+  `student_sessions`, so a student token can never reach `/admin/*` and an admin
+  token can never reach `/me/*`.
+- [x] Student portal: profile, schedule, history, GPA/credits, degree progress
   (per category, earned vs. required, visually distinct from "surplus credits
   in one category don't offset another" — this is the #1 thing students in
   the brief get wrong), chat panel.
-- [ ] Admin panel: document upload/list/remove/re-ingest, student/course/enrollment
+  `frontend/src/pages/Portal.tsx`. The progress panel leads with *categories
+  satisfied*, never draws the credit total as a single bar, and renders surplus
+  credits outside the category bar with a note saying where they cannot go.
+- [x] Admin panel: document upload/list/remove/re-ingest, student/course/enrollment
   browsers (filterable), behaviour config form (tone/model/length/temperature)
   that writes straight to the settings table.
+  `frontend/src/pages/Admin.tsx` over `/admin/*`. Browsers are read-only (the
+  dataset is frozen). Upload replaces one of the two *registered* documents
+  only — an unregistered PDF has no chunker, and a generic one is what Phase 3
+  argued against.
 - [ ] Confirm changing a behaviour setting changes the very next chat response,
   with no restart.
+  `backend/scripts/verify_phase6.py` measures it as brief-vs-detailed reply
+  length either side of a settings write. **Not yet run: needs a key.**
+
+**Exit check:** `verify_phase6.py`, in two parts:
+
+- **Part 1, `--structural` — NOT YET RUN, needs the database:** admin login, the
+  cross-principal refusals in both directions, the settings round-trip
+  (including a 422 rather than a 500 on a bad tone), and the browsers' filters.
+- **Part 2 — NOT YET RUN, needs a key:** the same question either side of a
+  `response_length` change, with no restart between.
+
+The frontend typechecks and builds clean (`npm run build`), but has never been
+rendered in a browser.
+
+```
+docker compose up -d --build                                             # :5173
+docker compose exec backend python scripts/verify_phase6.py --structural
+docker compose exec backend python scripts/verify_phase6.py
+```
 
 ---
 
@@ -277,6 +312,20 @@ Phase 1 onward and distill it into the final 1-2 pages last.
 
 Must answer: database choice and why, chunking/retrieval strategy and why,
 what you cached and why, what you'd do differently with two more weeks.
+
+- [x] Running notes kept from Phase 0 onward, written at the time each decision
+  was made. Now [DESIGN_NOTES.md](DESIGN_NOTES.md) (~7,200 words), kept rather
+  than deleted because it is the only place the *rejected* options survive.
+- [x] Distilled into [DESIGN.md](DESIGN.md), ~1,400 words, answering all four
+  required questions in order, plus a section on what the architecture actually
+  enforces and an honest verification-status section.
+- [x] Root [README.md](README.md) brought up to date for the finished project.
+
+The caching answer is the one that needed the notes: the line drawn is **cache
+what is immutable within a process, or keyed by content hash; never cache what
+an admin can change or what a correct answer depends on** — which is why
+`get_settings()` is `@lru_cache`d and `assistant_config.load()` deliberately is
+not.
 
 ---
 

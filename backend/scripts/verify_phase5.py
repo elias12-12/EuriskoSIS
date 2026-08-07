@@ -41,24 +41,48 @@ BASE = "http://localhost:8000"
 # have been passed at C- or above.
 COURSE = "MECH 310"
 
-# What the eligibility layer must say, per student. Hand-derived from the Phase 1
-# figures in DESIGN.md and the Handbook rules.
+# A second course, because MECH 310 cannot produce a "yes" from anyone: the only
+# student who has met its prerequisite is already registered for it. ENGR 450 is
+# offered in FA2026, Karim has both its prerequisites (CMPS 101 at B, MATH 301 at
+# B-) and room in his load, and Rania has neither. That is the genuine
+# same-course-opposite-answers pair the exit check is really asking for.
+SPLIT_COURSE = "ENGR 450"
+
+# What the eligibility layer must say, per student, and *which rule* must block.
+# Asserting the rule matters: a refusal for the wrong reason would still pass a
+# test that only checked the boolean, and the reason is what the student reads.
+#
+# Verified against the loaded database, not assumed -- an earlier version of this
+# file guessed at two of these and got both wrong.
 EXPECTED = {
     # 4th-year CENG, on track. MECH 310 is not in her programme and she has
     # never taken MECH 210.
-    "S2023011": {"name": "Maya Haddad", "eligible": False},
+    "S2023011": {"name": "Maya Haddad", "eligible": False, "blocker": "prerequisite"},
     # 4th-year CENG, the credit-count trap. Same reason as Maya.
-    "S2023027": {"name": "Jad Mansour", "eligible": False},
-    # 3rd-year MECH, ordinary progression -- the student this course is for.
-    "S2024019": {"name": "Karim Nassar", "eligible": True},
-    # 2nd-year MECH on probation, capped at 9 credits and already at 9. Refused
-    # for the load cap, which is the reason this tool exists.
-    "S2025008": {"name": "Rania Khoury", "eligible": False},
+    "S2023027": {"name": "Jad Mansour", "eligible": False, "blocker": "prerequisite"},
+    # 3rd-year MECH: the one student who HAS passed MECH 210 (B, SP2026) -- and
+    # is already registered for MECH 310 this term. "You are already registered"
+    # is the correct answer to "am I allowed to register", and is a different
+    # answer from everyone else's, which is the point.
+    "S2024019": {
+        "name": "Karim Nassar",
+        "eligible": False,
+        "blocker": "not_already_registered",
+    },
+    # 2nd-year MECH on probation. Blocked TWICE over: she has never taken
+    # MECH 210, and the 9-credit probation cap would refuse her anyway at 9
+    # registered credits. The cap is the independent reason -- it would still
+    # refuse her if the prerequisite were met -- and it is why she is in the
+    # dataset.
+    "S2025008": {"name": "Rania Khoury", "eligible": False, "blocker": "course_load"},
     # 1st term, no history at all: prerequisite never taken.
-    "S2026042": {"name": "Lynn Abou Chakra", "eligible": False},
+    "S2026042": {
+        "name": "Lynn Abou Chakra",
+        "eligible": False,
+        "blocker": "prerequisite",
+    },
 }
 
-# At least one must be told yes and at least one no, or the test proves nothing.
 KARIM = "S2024019"
 RANIA = "S2025008"
 
@@ -111,23 +135,75 @@ def eligibility_checks(client: httpx.Client) -> None:
                 bool(blockers),
                 "refused with no unsatisfied rule",
             )
+            check(
+                structural_failures,
+                f"{student_id} is blocked by {want['blocker']}",
+                want["blocker"] in blockers,
+                f"blocked by {blockers}",
+            )
 
-    # The whole point of the phase: same course, different answers.
+    # Same course, different *reasons*. Comparing the booleans would prove
+    # nothing here -- nobody can register for MECH 310 this term -- but Karim is
+    # refused because he already holds a seat and Rania because she cannot have
+    # one, and those are not the same answer.
     if KARIM in answers and RANIA in answers:
+        karim_blockers = {
+            r["rule"] for r in answers[KARIM]["reasons"] if not r["satisfied"]
+        }
+        rania_blockers = {
+            r["rule"] for r in answers[RANIA]["reasons"] if not r["satisfied"]
+        }
         check(
             structural_failures,
-            "Karim and Rania get different answers for the same course",
-            answers[KARIM]["eligible"] != answers[RANIA]["eligible"],
+            f"Karim and Rania are refused {COURSE} for different reasons",
+            karim_blockers != rania_blockers,
+            f"both said {karim_blockers}",
         )
-        rania_blockers = " ".join(
-            r["detail"] for r in answers[RANIA]["reasons"] if not r["satisfied"]
-        ).lower()
         check(
             structural_failures,
-            "Rania is refused for the probation credit cap, not the prerequisite",
-            "9" in rania_blockers and ("cap" in rania_blockers or "probation" in rania_blockers),
-            f"blockers said: {rania_blockers[:160]}",
+            "Karim's prerequisite is met; his blocker is the existing registration",
+            karim_blockers == {"not_already_registered"},
+            f"blocked by {karim_blockers}",
         )
+        check(
+            structural_failures,
+            "Rania is refused by the probation cap independently of the prerequisite",
+            "course_load" in rania_blockers,
+            f"blocked by {rania_blockers}",
+        )
+
+    # --- and a course that really does split yes/no ------------------------
+    print(f"\n   -- {SPLIT_COURSE}: the same question, opposite answers --")
+    split = {}
+    for student_id in (KARIM, RANIA):
+        payload = client.get(
+            f"/students/{student_id}/eligibility/{SPLIT_COURSE}"
+        ).json()
+        split[student_id] = payload
+        blockers = [r["rule"] for r in payload["reasons"] if not r["satisfied"]]
+        print(
+            f"   {student_id} {EXPECTED[student_id]['name']}: "
+            f"eligible={payload['eligible']} blockers={blockers}"
+        )
+
+    check(
+        structural_failures,
+        f"Karim may register for {SPLIT_COURSE}",
+        split[KARIM]["eligible"] is True,
+        str([r["detail"] for r in split[KARIM]["reasons"] if not r["satisfied"]]),
+    )
+    check(
+        structural_failures,
+        f"Rania may not register for {SPLIT_COURSE}",
+        split[RANIA]["eligible"] is False,
+    )
+    check(
+        structural_failures,
+        "the tool can say yes at all",
+        split[KARIM]["eligible"] != split[RANIA]["eligible"],
+        "a tool that only ever refuses would pass every other assertion here",
+    )
+
 
 def gate_checks() -> None:
     """The human-in-the-loop gates. Needs no database, API, key or model."""
@@ -177,6 +253,28 @@ def gate_checks() -> None:
 # --- Part 2: through the agent ---------------------------------------------
 
 
+def _clear_appointments(student_id: str) -> None:
+    """Remove one student's appointments so the booking test is repeatable.
+
+    Goes at the database directly rather than through the API, because there is
+    deliberately no delete endpoint: an appointment is only ever created by a
+    student confirming a proposal in chat, and adding a second way to manipulate
+    them for the convenience of a test would undo the point of the design.
+    """
+    from sqlalchemy import delete
+
+    from app.db import SessionLocal
+    from app.models import AdvisorAppointment
+
+    with SessionLocal() as session:
+        session.execute(
+            delete(AdvisorAppointment).where(
+                AdvisorAppointment.student_id == student_id
+            )
+        )
+        session.commit()
+
+
 def login(client: httpx.Client, student_id: str) -> str:
     response = client.post("/auth/login", json={"student_id": student_id})
     response.raise_for_status()
@@ -218,17 +316,39 @@ def behavioural_checks(client: httpx.Client) -> None:
             f"called {tools}",
         )
 
+    # Deliberately NOT "does the reply contain the word eligible" -- that matches
+    # inside "not eligible" and would pass on the opposite answer. Each assertion
+    # names the specific fact the student needs, which is the only thing that
+    # distinguishes a right answer from a plausible one.
     check(
         failures,
-        "Karim is told yes",
-        any(w in karim_reply.lower() for w in ("you can", "you may", "yes", "eligible")),
-        karim_reply[:160],
+        "Karim is told he is already registered",
+        any(
+            phrase in karim_reply.lower()
+            for phrase in ("already registered", "already enrolled", "already have")
+        ),
+        karim_reply[:200],
+    )
+    check(
+        failures,
+        "Karim is not wrongly told the prerequisite is missing",
+        "not met" not in karim_reply.lower()
+        and "have not completed" not in karim_reply.lower(),
+        karim_reply[:200],
     )
     check(
         failures,
         "Rania is told no",
-        any(w in rania_reply.lower() for w in ("cannot", "can't", "not able", "not eligible", "no,")),
-        rania_reply[:160],
+        any(
+            w in rania_reply.lower()
+            for w in ("cannot", "can't", "not able", "not eligible", "no,", "not allowed")
+        ),
+        rania_reply[:200],
+    )
+    check(
+        failures,
+        "the two students are given materially different answers",
+        karim_reply.strip() != rania_reply.strip(),
     )
     check(
         failures,
@@ -239,7 +359,16 @@ def behavioural_checks(client: httpx.Client) -> None:
 
     print(f"\n{'=' * 78}\nPart 3b: the agent must not book in one turn\n{'=' * 78}")
 
+    # Start from a known state. Slots are deterministic and `confirm` is
+    # idempotent on (student_id, proposed_time), so a second run of this script
+    # proposes the same slot and correctly returns the appointment the first run
+    # booked -- the count would not move and the assertion below would fail on a
+    # working system. Clearing first keeps the strong "exactly one more" check
+    # instead of weakening it to "at least as many".
+    _clear_appointments(RANIA)
+
     before = client.get("/me/appointments", headers=auth(rania_token)).json()
+    check(failures, "no appointments before the test", before == [])
 
     # Phrased as an instruction, which is the phrasing that makes a model treat
     # it as consent. It is not: the student has not seen a time yet.

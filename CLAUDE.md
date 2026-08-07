@@ -6,31 +6,76 @@ spec, and how I want us to work. Don't re-litigate the decisions marked
 LOCKED — if one seems wrong, say so and ask, don't just change it.
 
 See `PROJECT_PLAN.md` in this same repo for the phase-by-phase build order.
-**Current phase: 5 — eligibility tool and human-in-the-loop — BUILT, EXIT CHECK
-PART RUN.** Phases 0, 1 and 2 are complete (Phase 2 verified 30 Jul 2026: all
-five endpoints for all five student IDs via Swagger and `scripts/verify_phase2.py`).
-**Next: Phase 6 — the UIs.** Update this line as we move through phases.
+**All seven phases are built. Phase 7 (DESIGN.md) is complete:** `DESIGN.md` is
+the distilled ~1,400-word deliverable, `DESIGN_NOTES.md` the phase-by-phase
+working record it came from. Phases 0, 1 and 2 are verified end to end (Phase 2
+on 30 Jul 2026: all five endpoints for all five student IDs).
 
-**Three exit checks are outstanding, all blocked on the same thing: there is no
-`.env` and so no `OPENAI_API_KEY`.** Everything verifiable without one has been.
+**All seven phases are built and every exit check passes** against a running
+stack, model calls included. Verified 7 Aug 2026:
 
-- **Phase 3** (revision `0004`, `ingestion/`, `GET /documents/search`): the 58
-  chunk boundaries are hand-verified via `scripts/inspect_chunks.py` (no key
-  needed). The six-question retrieval test — `scripts/verify_phase3.py` — has
-  not run. Retrieval that is wrong here is wrong behind the agent too, so this
-  is the one to close first.
-- **Phase 4** (revision `0005`, `app/agent.py`, `app/auth.py`, `/me/*`,
-  `/me/chat`): `scripts/verify_phase4.py --structural` **passes** for all seven
-  tools — no tool exposes a parameter capable of naming a student or a
-  conversation, which is the real scoping guarantee. The behavioural half has
-  not run.
-- **Phase 5** (revision `0006`, `app/appointments.py`, three more tools):
-  `scripts/verify_phase5.py --gates` **passes** with nothing required. The
-  five-student MECH 310 matrix needs the database; the chat tests need a key.
+| Check | Result |
+|---|---|
+| 7 migrations + `--autogenerate` | applied; **empty** diff, zero drift |
+| `verify_phase1` | GPA/credits/categories match pandas for all 5 |
+| `verify_phase2` | 5 endpoints x 5 students + 404 paths |
+| `verify_phase3` | **6/6** retrieval questions |
+| `verify_phase4` | structural (7 tools) + 2 live sessions + refusal |
+| `verify_phase5` | gates + MECH 310 matrix + propose/confirm, repeatable |
+| `verify_phase6` | cross-principal + browsers + 599->2933 chars live |
 
-To close all three: create `.env` from `.env.example` with a key, then
-`docker compose up -d --build`, `scripts/ingest_documents.py`, and the three
-`verify_phase{3,4,5}.py` scripts.
+**Model access is a Pydantic AI Gateway key** (`PYDANTIC_AI_GATEWAY_API_KEY`,
+`pylf_...`), which covers both halves: the agent via a `gateway/openai:gpt-5-mini`
+model name, and embeddings via the gateway's OpenAI-compatible route. A direct
+`OPENAI_API_KEY` still works — `ingestion/embed.py` prefers the gateway when
+present and `assistant_settings.model_name` selects the chat provider.
+
+**Retrieval is hybrid, not pure vector.** Phase 3's test set failed 3/6 on pure
+cosine, so a Postgres full-text channel was added and the two rankings fused by
+reciprocal rank fusion. Do not "simplify" it back to a single channel: the three
+failures were exact-code and exact-phrase queries, which is most of what students
+actually ask.
+
+Portal at `:5173`, API at `:8000`. To re-verify from scratch:
+
+```
+docker compose up -d --build
+docker compose exec backend python scripts/load_spreadsheet.py
+docker compose exec backend python scripts/ingest_documents.py
+docker compose exec backend python scripts/verify_phase{1,2,3,4,5,6}.py
+```
+
+Logfire tracing is deliberately unwired. A token would work, but traces carry
+prompts and tool results — student names, grades and schedules — off the machine,
+against an architecture whose whole point is scoping them (Handbook section 4.1).
+
+**What the first real run corrected — worth not repeating.** Two bugs that only
+appear when the stack actually runs:
+
+- A Compose **anonymous volume at `/app/.venv` was serving a virtualenv built
+  before three dependencies existed**. Anonymous volumes survive `up --build`, so
+  the image was right and the mount was stale. Fixed by moving the venv to
+  `/opt/venv`, outside the bind mount, so there is nothing to shadow. Do not
+  reintroduce a `- /app/.venv` line.
+- **`/me/chat` had no missing-credentials guard**, so it 500'd where
+  `/documents/search` 503'd — and the 500 lost its CORS headers (Starlette's
+  error middleware sits outside `CORSMiddleware`), which the browser reports only
+  as `TypeError: Failed to fetch`. `main.py` now has a catch-all exception
+  handler so every 500 stays readable.
+
+And three facts asserted from memory that the data contradicted. **Check fixture
+facts against the database:**
+
+- **Karim (S2024019)** has passed MECH 210 (B, SP2026) and is **already
+  registered** for MECH 310 — so "am I allowed to register" correctly answers
+  "you already are". He is genuinely eligible for ENGR 450, which is the case
+  that proves the tool can say yes.
+- **Rania (S2025008)** has **never taken MECH 210**; she is a 2nd-year repeating
+  PHYS 101 and MATH 102, blocked by both the prerequisite and the 9-credit
+  probation cap.
+- An assertion that matched `"eligible"` also matched inside `"not eligible"` and
+  passed on the opposite answer. Assert the specific fact, not a substring that
+  appears in both outcomes.
 
 Resolved in Phase 4 (was a carry-forward from Phase 2): the `/me/*` surface now
 exists and takes the ID from the authenticated session. `/students/{id}/*`

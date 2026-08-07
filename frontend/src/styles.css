@@ -1,0 +1,587 @@
+/* Plain CSS, no framework.
+ *
+ * The one place styling carries meaning rather than decoration is the degree
+ * progress panel: a satisfied category, a partially met one and an untouched one
+ * must be distinguishable at a glance and not only by colour, and surplus
+ * credits must read as detached from the bar they sit under. See
+ * DegreeProgressPanel.tsx for why. */
+
+:root {
+  --ink: #16202c;
+  --muted: #5d6b7a;
+  --line: #dde3ea;
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --brand: #1f3f6e;
+  --good: #1c7a4a;
+  --good-bg: #e6f4ec;
+  --warn: #a35a06;
+  --warn-bg: #fdf1e0;
+  --bad: #a32020;
+  --bad-bg: #fbeaea;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+h2,
+h3,
+h4 {
+  margin: 0 0 0.5rem;
+  line-height: 1.25;
+}
+h3 {
+  margin-top: 1.5rem;
+  font-size: 1.05rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, monospace;
+  font-size: 0.92em;
+}
+
+/* --- shell ---------------------------------------------------------------- */
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1.5rem;
+  background: var(--brand);
+  color: #fff;
+}
+.app__bar .muted {
+  color: #b9c8dd;
+}
+
+.app__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.app__mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #ffffff22;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.app__nav {
+  display: flex;
+  gap: 0.4rem;
+}
+.app__nav a {
+  color: #d7e2f0;
+  text-decoration: none;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+}
+.app__nav a.active {
+  background: #ffffff1f;
+  color: #fff;
+}
+
+.app__main {
+  flex: 1;
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.app__foot {
+  padding: 1rem 1.5rem 2rem;
+  text-align: center;
+  font-size: 0.86rem;
+}
+
+/* --- panels and tabs ------------------------------------------------------ */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.portal__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.portal__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  border: 0;
+  background: none;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+  color: var(--muted);
+  font: inherit;
+  border-bottom: 2px solid transparent;
+}
+.tab--active {
+  color: var(--brand);
+  font-weight: 600;
+  border-bottom-color: var(--brand);
+}
+
+/* --- stats ---------------------------------------------------------------- */
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+.stat {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.9rem;
+}
+.eyebrow {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.headline-number {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 650;
+  line-height: 1.1;
+}
+.headline-number--secondary {
+  font-size: 1.5rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1.25rem;
+  margin: 1.25rem 0 0;
+}
+.detail-grid dt {
+  color: var(--muted);
+}
+.detail-grid dd {
+  margin: 0;
+}
+
+/* --- degree progress ------------------------------------------------------ */
+
+.progress__headline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The caption that stops the credit total being read as progress. */
+.warning-note {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.7rem;
+  background: var(--warn-bg);
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  font-size: 0.86rem;
+  color: #6b3d05;
+}
+
+.category-list {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1.1rem;
+}
+
+.category {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+}
+/* Not colour alone: each state also differs in border weight and badge text,
+   so the three are distinguishable without colour vision. */
+.category--satisfied {
+  border-left-color: var(--good);
+}
+.category--partial {
+  border-left-color: var(--warn);
+}
+.category--untouched {
+  border-left-color: var(--bad);
+  background: #fffafa;
+}
+
+.category__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+.category__head h4 {
+  margin: 0;
+}
+
+.category__bar {
+  position: relative;
+  display: flex;
+  height: 10px;
+  margin: 0.6rem 0 0.5rem;
+  background: #eef1f5;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.category__fill {
+  background: var(--brand);
+  transition: width 0.2s ease;
+}
+.category--satisfied .category__fill {
+  background: var(--good);
+}
+.category__fill--pending {
+  background: repeating-linear-gradient(
+    45deg,
+    #b9c8dd,
+    #b9c8dd 4px,
+    #cdd8e6 4px,
+    #cdd8e6 8px
+  );
+}
+
+.category__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  font-size: 0.88rem;
+}
+
+/* Sits outside and below the bar, visibly detached from it. */
+.surplus {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0 0;
+  padding-top: 0.55rem;
+  border-top: 1px dashed var(--line);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.surplus__chip {
+  padding: 0.1rem 0.5rem;
+  border: 1px dashed var(--muted);
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.badge {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge--satisfied {
+  background: var(--good-bg);
+  color: var(--good);
+}
+.badge--partial {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.badge--untouched {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+/* --- callouts ------------------------------------------------------------- */
+
+.callout {
+  margin: 1rem 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  background: #eef2f7;
+  font-size: 0.9rem;
+}
+.callout--good {
+  background: var(--good-bg);
+  color: var(--good);
+}
+.callout--warn {
+  background: var(--warn-bg);
+  color: #6b3d05;
+}
+.callout--error {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+.ok-note {
+  color: var(--good);
+  font-size: 0.88rem;
+}
+.error-note {
+  color: var(--bad);
+  font-size: 0.85rem;
+}
+
+/* --- tables --------------------------------------------------------------- */
+
+.table-scroll {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.table th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.table tbody tr:hover {
+  background: #fafbfd;
+}
+
+/* --- forms ---------------------------------------------------------------- */
+
+input,
+select,
+button {
+  font: inherit;
+}
+input,
+select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+input[type="range"] {
+  padding: 0;
+}
+
+button {
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  background: var(--brand);
+  color: #fff;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button.secondary {
+  background: #fff;
+  color: var(--brand);
+}
+.link-button {
+  border: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.form {
+  display: grid;
+  gap: 1rem;
+  max-width: 620px;
+}
+.form label {
+  display: grid;
+  gap: 0.3rem;
+}
+.form label > span:first-child {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.form__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.filters {
+  display: flex;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.filters label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* --- login ---------------------------------------------------------------- */
+
+.login {
+  max-width: 560px;
+  margin: 2rem auto;
+}
+.login__form {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.login__form input {
+  flex: 1;
+}
+.login__accounts {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.login__accounts button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  background: #fff;
+  color: var(--ink);
+  border-color: var(--line);
+  text-align: left;
+}
+.login__accounts button:hover:not(:disabled) {
+  border-color: var(--brand);
+}
+
+/* --- chat ----------------------------------------------------------------- */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 60vh;
+}
+.chat__log {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+  padding-bottom: 1rem;
+}
+.chat__empty {
+  margin: auto 0;
+  text-align: center;
+  color: var(--muted);
+}
+.chat__suggestions {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  display: grid;
+  gap: 0.4rem;
+  justify-items: center;
+}
+.chat__suggestions button {
+  background: #fff;
+  color: var(--brand);
+  border-color: var(--line);
+}
+
+.bubble {
+  max-width: min(78%, 720px);
+  padding: 0.65rem 0.9rem;
+  border-radius: 12px;
+}
+.bubble--user {
+  align-self: flex-end;
+  background: var(--brand);
+  color: #fff;
+}
+.bubble--assistant {
+  align-self: flex-start;
+  background: #eef2f7;
+}
+.bubble__text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.bubble__tools {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+}
+.bubble__tools code {
+  display: inline-block;
+  margin-right: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  background: #ffffffcc;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.chat__thinking {
+  align-self: flex-start;
+}
+
+.chat__composer {
+  display: flex;
+  gap: 0.5rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.85rem;
+}
+.chat__composer input {
+  flex: 1;
+}
+
+.appointments,
+.reports {
+  padding-left: 1.1rem;
+  margin: 0.5rem 0 0;
+}

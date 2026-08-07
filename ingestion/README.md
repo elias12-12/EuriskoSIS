@@ -1,7 +1,9 @@
 # ingestion
 
 PDF parsing, chunking, and embedding. Built in Phase 3 (see
-[PROJECT_PLAN.md](../PROJECT_PLAN.md)); reasoning is in [DESIGN.md](../DESIGN.md).
+[PROJECT_PLAN.md](../PROJECT_PLAN.md)). The chunking strategy is summarised in
+[DESIGN.md](../DESIGN.md) §2 and argued at length, with the rejected
+alternatives, in [DESIGN_NOTES.md](../DESIGN_NOTES.md).
 
 Lives at the repo root but is copied into the backend image at `/app/ingestion`
 and imported as `ingestion`, so the admin panel's "re-run ingestion" button can

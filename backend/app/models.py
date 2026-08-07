@@ -528,6 +528,37 @@ class StudentSession(Base):
     )
 
 
+class AdminSession(Base):
+    """An authenticated administrator session.
+
+    A separate table from `student_sessions`, deliberately, rather than a
+    nullable `student_id` on a shared one. The two are different kinds of
+    principal with different powers, and a single table with a nullable owner
+    column is exactly the shape where a forgotten `WHERE student_id IS NOT NULL`
+    silently turns an admin token into a student one, or the reverse.
+
+    The brief gives the admin "a separate, simpler login", so this is a shared
+    password from the environment rather than per-administrator accounts.
+    """
+
+    __tablename__ = "admin_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "expires_at > created_at", name="ck_admin_session_expiry_after_start"
+        ),
+    )
+
+
 # The admin-configurable vocabularies. Constrained rather than free text because
 # each value maps to a specific instruction fragment in the system prompt: an
 # unrecognised tone would silently produce no instruction at all, which looks
